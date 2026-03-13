@@ -16,5 +16,7 @@ int iris_set_icc_bw(struct iris_core *core, unsigned long icc_bw);
 int iris_disable_unprepare_clock(struct iris_core *core, enum platform_clk_type clk_type);
 int iris_prepare_enable_clock(struct iris_core *core, enum platform_clk_type clk_type);
 int iris_create_child_device_and_map(struct iris_core *core, const struct iris_context_bank *cb);
+enum iris_buffer_region iris_get_region(struct iris_inst *inst, enum iris_buffer_type buffer_type);
+struct device *iris_get_cb_dev(struct iris_core *core, enum iris_buffer_region buffer_type);
 
 #endif

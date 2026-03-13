@@ -13,6 +13,7 @@
 #include <linux/reset.h>
 
 #include "iris_core.h"
+#include "iris_instance.h"
 #include "iris_resources.h"
 
 #define BW_THRESHOLD 50000
@@ -185,4 +186,44 @@ int iris_create_child_device_and_map(struct iris_core *core, const struct iris_c
 	}
 
 	return 0;
+}
+
+enum iris_buffer_region iris_get_region(struct iris_inst *inst, enum iris_buffer_type buffer_type)
+{
+	switch (buffer_type) {
+	case BUF_INPUT:
+		if (inst->domain == ENCODER)
+			return IRIS_PIXEL_REGION;
+		else
+			return IRIS_BITSTREAM_REGION;
+	case BUF_OUTPUT:
+		if (inst->domain == ENCODER)
+			return IRIS_BITSTREAM_REGION;
+		else
+			return IRIS_PIXEL_REGION;
+	case BUF_BIN:
+		return IRIS_BITSTREAM_REGION;
+	case BUF_DPB:
+	case BUF_PARTIAL:
+	case BUF_SCRATCH_2:
+	case BUF_VPSS:
+		return IRIS_PIXEL_REGION;
+	case BUF_ARP:
+	case BUF_COMV:
+	case BUF_LINE:
+	case BUF_NON_COMV:
+	case BUF_PERSIST:
+		return IRIS_NON_PIXEL_REGION;
+	default:
+		dev_err(inst->core->dev, "unknown buffer type: %d\n", buffer_type);
+		return IRIS_UNKNOWN_REGION;
+	}
+}
+
+struct device *iris_get_cb_dev(struct iris_core *core, enum iris_buffer_region region)
+{
+	if (core->cb_devs[region])
+		return core->cb_devs[region];
+
+	return core->dev;
 }
