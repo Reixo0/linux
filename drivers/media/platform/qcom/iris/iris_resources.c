@@ -6,6 +6,7 @@
 #include <linux/clk.h>
 #include <linux/devfreq.h>
 #include <linux/interconnect.h>
+#include <linux/iris_vpu_bus.h>
 #include <linux/pm_domain.h>
 #include <linux/pm_opp.h>
 #include <linux/pm_runtime.h>
@@ -137,6 +138,51 @@ int iris_disable_unprepare_clock(struct iris_core *core, enum platform_clk_type 
 		return -EINVAL;
 
 	clk_disable_unprepare(clock);
+
+	return 0;
+}
+
+static void iris_device_release(struct device *dev)
+{
+	dev_set_drvdata(dev, NULL);
+	kfree(dev);
+}
+
+int iris_create_child_device_and_map(struct iris_core *core, const struct iris_context_bank *cb)
+{
+	u32 index, region_mask = cb->region_mask;
+	struct device *dev;
+	int ret;
+
+	dev = kzalloc_obj(*dev);
+	if (!dev)
+		return -ENOMEM;
+
+	dev->release = iris_device_release;
+	dev->bus = &iris_vpu_bus_type;
+	dev->parent = core->dev;
+	dev->coherent_dma_mask = core->iris_platform_data->dma_mask;
+	dev->dma_mask = &dev->coherent_dma_mask;
+
+	dev_set_name(dev, "%s", cb->name);
+	dev_set_drvdata(dev, (void *)cb);
+
+	ret = device_register(dev);
+	if (ret) {
+		put_device(dev);
+		return ret;
+	}
+
+	if (!device_iommu_mapped(dev)) {
+		device_unregister(dev);
+		return 0;
+	}
+
+	while (region_mask) {
+		index = __ffs(region_mask);
+		core->cb_devs[index] = dev;
+		region_mask &= ~BIT(index);
+	}
 
 	return 0;
 }

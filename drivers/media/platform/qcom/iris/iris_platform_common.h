@@ -256,6 +256,18 @@ struct icc_vote_data {
 	u32 fps;
 };
 
+enum iris_buffer_region {
+	IRIS_UNKNOWN_REGION,
+	IRIS_BITSTREAM_REGION,
+	IRIS_NON_PIXEL_REGION,
+	IRIS_PIXEL_REGION,
+	IRIS_SECURE_BITSTREAM_REGION,
+	IRIS_SECURE_NON_PIXEL_REGION,
+	IRIS_SECURE_PIXEL_REGION,
+	IRIS_FIRMWARE_REGION,
+	IRIS_MAX_REGION,
+};
+
 struct iris_context_bank {
 	char *name;
 	u32 f_id;
@@ -351,6 +363,8 @@ struct iris_platform_data {
 	const struct platform_inst_slice_caps *slice_caps;
 	const struct tz_cp_config *tz_cp_config_data;
 	u32 tz_cp_config_data_size;
+	const struct iris_context_bank *cb_data;
+	const u32 cb_data_size;
 	u32 num_vpp_pipe;
 	bool no_aon;
 	bool no_rpmh;

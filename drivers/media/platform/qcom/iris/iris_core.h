@@ -40,6 +40,7 @@ struct qcom_ubwc_cfg_data;
  * struct iris_core - holds core parameters valid for all instances
  *
  * @dev: reference to device structure
+ * @cb_devs: array of context bank devices (eg: bitstream, non-pixel, pixel, etc)
  * @reg_base: IO memory base address
  * @irq: iris irq
  * @v4l2_dev: a holder for v4l2 device structure
@@ -86,6 +87,7 @@ struct qcom_ubwc_cfg_data;
 
 struct iris_core {
 	struct device				*dev;
+	struct device				*cb_devs[IRIS_MAX_REGION];
 	void __iomem				*reg_base;
 	int					irq;
 	struct v4l2_device			v4l2_dev;
