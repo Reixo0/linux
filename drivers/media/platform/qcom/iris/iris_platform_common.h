@@ -256,6 +256,12 @@ struct icc_vote_data {
 	u32 fps;
 };
 
+struct iris_context_bank {
+	char *name;
+	u32 f_id;
+	u32 region_mask;
+};
+
 enum platform_pm_domain_type {
 	IRIS_CTRL_POWER_DOMAIN,
 	IRIS_HW_POWER_DOMAIN,
