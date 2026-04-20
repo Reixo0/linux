@@ -37,6 +37,16 @@ config QCOM_COMMAND_DB
 	  resource on a RPM-hardened platform must use this database to get
 	  SoC specific identifier and information for the shared resources.
 
+config QCOM_CRM
+	tristate "Qualcomm Technologies, Inc. (QTI) CESTA Resource Manager (CRM) driver"
+	depends on QCOM_RPMH && (ARCH_QCOM || COMPILE_TEST)
+	help
+	  Support for communication with the hardened-CRM blocks in
+	  Qualcomm Technologies, Inc. (QTI) SoCs. CRM provides interface
+	  to vote desired power state of resources local or global to a subsystem.
+	  A set of hardware components aggregate requests for these resources and
+	  help apply the aggregated power state on the resource.
+
 config QCOM_GENI_SE
 	tristate "Qualcomm GENI Serial Engine Driver"
 	default ARCH_QCOM
