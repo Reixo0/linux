@@ -35,6 +35,7 @@ int q6apm_send_cmd_sync(struct q6apm *apm, struct gpr_pkt *pkt,
 	gpr_device_t *gdev = apm->gdev;
 
 	pkt->hdr.dest_domain = audioreach_gpr_dest_domain(gdev);
+	pkt->hdr.src_port = gdev->svc_id;
 
 	return audioreach_send_cmd_sync(&gdev->dev, gdev, &apm->result, &apm->lock,
 					NULL, &apm->wait, pkt, rsp_opcode);
