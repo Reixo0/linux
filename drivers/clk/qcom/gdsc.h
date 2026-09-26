@@ -76,6 +76,9 @@ struct gdsc {
 	const char 			*supply;
 	struct regulator		*rsupply;
 
+	/* the clock controller, held active while the GDSC is on (pd_list) */
+	struct device			*rpm_dev;
+
 	bool				needs_icc;
 	unsigned int			icc_path_index;
 	struct icc_path			*icc_path;

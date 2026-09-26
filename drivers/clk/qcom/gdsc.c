@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/ktime.h>
 #include <linux/pm_domain.h>
+#include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/reset-controller.h>
@@ -282,9 +283,8 @@ static void gdsc_retain_ff_on(struct gdsc *sc)
 	regmap_update_bits(sc->regmap, sc->gdscr, mask, mask);
 }
 
-static int gdsc_enable(struct generic_pm_domain *domain)
+static int gdsc_enable_hw(struct gdsc *sc)
 {
-	struct gdsc *sc = domain_to_gdsc(domain);
 	int ret;
 
 	if (sc->pwrsts == PWRSTS_ON)
@@ -340,9 +340,8 @@ static int gdsc_enable(struct generic_pm_domain *domain)
 	return 0;
 }
 
-static int gdsc_disable(struct generic_pm_domain *domain)
+static int gdsc_disable_hw(struct gdsc *sc, struct generic_pm_domain *domain)
 {
-	struct gdsc *sc = domain_to_gdsc(domain);
 	int ret;
 
 	if (sc->pwrsts == PWRSTS_ON)
@@ -387,6 +386,41 @@ static int gdsc_disable(struct generic_pm_domain *domain)
 		gdsc_assert_clamp_io(sc);
 
 	return 0;
+}
+
+/*
+ * A GDSC under the controller's pd_list needs the controller's required-opps
+ * vote while it switches on: keep the controller runtime active while the
+ * GDSC is on.
+ */
+static int gdsc_enable(struct generic_pm_domain *domain)
+{
+	struct gdsc *sc = domain_to_gdsc(domain);
+	int ret;
+
+	if (sc->rpm_dev) {
+		ret = pm_runtime_resume_and_get(sc->rpm_dev);
+		if (ret < 0)
+			return ret;
+	}
+
+	ret = gdsc_enable_hw(sc);
+	if (ret && sc->rpm_dev)
+		pm_runtime_put(sc->rpm_dev);
+
+	return ret;
+}
+
+static int gdsc_disable(struct generic_pm_domain *domain)
+{
+	struct gdsc *sc = domain_to_gdsc(domain);
+	int ret;
+
+	ret = gdsc_disable_hw(sc, domain);
+	if (!ret && sc->rpm_dev)
+		pm_runtime_put(sc->rpm_dev);
+
+	return ret;
 }
 
 static int gdsc_set_hwmode(struct generic_pm_domain *domain, struct device *dev, bool mode)
@@ -649,6 +683,13 @@ int gdsc_register(struct gdsc_desc *desc,
 		ret = gdsc_init(scs[i]);
 		if (ret)
 			return ret;
+		if (desc->pd_list && scs[i]->pwrsts != PWRSTS_ON &&
+		    pm_runtime_enabled(dev)) {
+			scs[i]->rpm_dev = dev;
+			/* already on: its disable will drop this */
+			if (gdsc_check_status(scs[i], GDSC_ON) > 0)
+				pm_runtime_get_noresume(dev);
+		}
 		data->domains[i] = &scs[i]->pd;
 	}
 
