@@ -2106,6 +2106,15 @@ end:
 	return ret;
 }
 
+int msm_dp_ctrl_retrain_link(struct msm_dp_ctrl *msm_dp_ctrl,
+			     struct msm_dp_panel *panel)
+{
+	struct msm_dp_ctrl_private *ctrl =
+		container_of(msm_dp_ctrl, struct msm_dp_ctrl_private, msm_dp_ctrl);
+
+	return msm_dp_ctrl_link_maintenance(ctrl, panel);
+}
+
 #define SCRAMBLER_RESET_COUNT_VALUE		0xFC
 
 static void msm_dp_ctrl_send_phy_pattern(struct msm_dp_ctrl_private *ctrl,

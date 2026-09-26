@@ -56,6 +56,8 @@ struct msm_dp_display_private {
 
 	struct mutex plugged_lock;
 	bool plugged;
+	/* unplugged while the stream was on: retrain on the next plug */
+	bool link_lost;
 
 	struct drm_device *drm_dev;
 
@@ -438,6 +440,17 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
 
 	ret = msm_dp_display_process_hpd_high(dp);
 
+	/*
+	 * A quick replug can come back with the CRTC still enabled and no
+	 * atomic_enable to follow: retrain here, once per unplug.
+	 */
+	if (!ret && dp->link_lost && dp->msm_dp_display.power_on) {
+		int rc = msm_dp_ctrl_retrain_link(dp->ctrl, dp->panel);
+
+		drm_dbg_dp(dp->drm_dev, "replug while streaming: retrain rc=%d\n", rc);
+	}
+	dp->link_lost = false;
+
 	drm_dbg_dp(dp->drm_dev, "After, type=%d sink_count=%d\n",
 			dp->msm_dp_display.connector_type,
 			dp->link->sink_count);
@@ -477,6 +490,9 @@ static int msm_dp_hpd_unplug_handle(struct msm_dp_display_private *dp)
 
 	if (!dp->plugged)
 		return 0;
+
+	if (dp->msm_dp_display.power_on)
+		dp->link_lost = true;
 
 	/* Don't forget modes for eDP */
 	if (!dp->msm_dp_display.is_edp)
