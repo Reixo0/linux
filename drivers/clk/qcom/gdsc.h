@@ -78,6 +78,7 @@ struct gdsc {
 
 	/* the clock controller, held active while the GDSC is on (pd_list) */
 	struct device			*rpm_dev;
+	bool				rpm_held;
 
 	bool				needs_icc;
 	unsigned int			icc_path_index;

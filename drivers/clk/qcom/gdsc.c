@@ -398,15 +398,18 @@ static int gdsc_enable(struct generic_pm_domain *domain)
 	struct gdsc *sc = domain_to_gdsc(domain);
 	int ret;
 
-	if (sc->rpm_dev) {
+	if (sc->rpm_dev && !sc->rpm_held) {
 		ret = pm_runtime_resume_and_get(sc->rpm_dev);
 		if (ret < 0)
 			return ret;
+		sc->rpm_held = true;
 	}
 
 	ret = gdsc_enable_hw(sc);
-	if (ret && sc->rpm_dev)
+	if (ret && sc->rpm_held) {
 		pm_runtime_put(sc->rpm_dev);
+		sc->rpm_held = false;
+	}
 
 	return ret;
 }
@@ -417,8 +420,10 @@ static int gdsc_disable(struct generic_pm_domain *domain)
 	int ret;
 
 	ret = gdsc_disable_hw(sc, domain);
-	if (!ret && sc->rpm_dev)
+	if (!ret && sc->rpm_held) {
 		pm_runtime_put(sc->rpm_dev);
+		sc->rpm_held = false;
+	}
 
 	return ret;
 }
@@ -687,8 +692,10 @@ int gdsc_register(struct gdsc_desc *desc,
 		    pm_runtime_enabled(dev)) {
 			scs[i]->rpm_dev = dev;
 			/* already on: its disable will drop this */
-			if (gdsc_check_status(scs[i], GDSC_ON) > 0)
+			if (gdsc_check_status(scs[i], GDSC_ON) > 0) {
 				pm_runtime_get_noresume(dev);
+				scs[i]->rpm_held = true;
+			}
 		}
 		data->domains[i] = &scs[i]->pd;
 	}
