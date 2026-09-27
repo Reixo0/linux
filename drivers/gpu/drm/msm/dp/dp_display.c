@@ -934,6 +934,7 @@ enum drm_connector_status msm_dp_bridge_detect(struct drm_bridge *bridge,
 	u8 dpcd[DP_RECEIVER_CAP_SIZE];
 	struct drm_dp_desc desc;
 	bool phy_deinit;
+	bool was_plugged;
 	int ret;
 
 	dp = to_dp_bridge(bridge)->msm_dp_display;
@@ -947,6 +948,7 @@ enum drm_connector_status msm_dp_bridge_detect(struct drm_bridge *bridge,
 		return status;
 	}
 
+	was_plugged = priv->plugged;
 	phy_deinit = msm_dp_display_host_phy_init(priv);
 
 	msm_dp_aux_enable_xfers(priv->aux, true);
@@ -996,6 +998,12 @@ end:
 			msm_dp_display_host_phy_exit(priv);
 		}
 
+		pm_runtime_put_sync(&dp->pdev->dev);
+		/* the sink is gone: drop the plugged state's reference too */
+		if (was_plugged)
+			pm_runtime_put_sync(&dp->pdev->dev);
+	} else if (was_plugged) {
+		/* the plugged state already holds its reference */
 		pm_runtime_put_sync(&dp->pdev->dev);
 	}
 
