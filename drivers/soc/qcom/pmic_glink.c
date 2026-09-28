@@ -53,6 +53,8 @@ struct pmic_glink {
 };
 
 static struct pmic_glink *__pmic_glink;
+/* a channel that came up before the platform device was bound, attached in pmic_glink_probe() */
+static struct rpmsg_device *__pmic_glink_rpdev;
 static DEFINE_MUTEX(__pmic_glink_lock);
 
 struct pmic_glink_client {
@@ -157,6 +159,10 @@ static int pmic_glink_rpmsg_callback(struct rpmsg_device *rpdev, void *data,
 	struct pmic_glink *pg = dev_get_drvdata(&rpdev->dev);
 	unsigned long flags;
 
+	/* not attached yet: no client can take the message */
+	if (!pg)
+		return 0;
+
 	if (len < sizeof(*hdr)) {
 		dev_warn(pg->dev, "ignoring truncated message\n");
 		return 0;
@@ -243,16 +249,9 @@ static void pmic_glink_pdr_callback(int state, char *svc_path, void *priv)
 	pmic_glink_state_notify_clients(pg);
 }
 
-static int pmic_glink_rpmsg_probe(struct rpmsg_device *rpdev)
+/* called with __pmic_glink_lock held */
+static void pmic_glink_attach_rpdev(struct pmic_glink *pg, struct rpmsg_device *rpdev)
 {
-	struct pmic_glink *pg;
-
-	guard(mutex)(&__pmic_glink_lock);
-	pg = __pmic_glink;
-	if (!pg)
-		return dev_err_probe(&rpdev->dev, -EPROBE_DEFER,
-				     "no pmic_glink device to attach to\n");
-
 	dev_set_drvdata(&rpdev->dev, pg);
 	pg->pdr_available = rpdev->id.driver_data;
 
@@ -261,6 +260,25 @@ static int pmic_glink_rpmsg_probe(struct rpmsg_device *rpdev)
 	if (!pg->pdr_available)
 		pg->pdr_state = SERVREG_SERVICE_STATE_UP;
 	pmic_glink_state_notify_clients(pg);
+}
+
+static int pmic_glink_rpmsg_probe(struct rpmsg_device *rpdev)
+{
+	struct pmic_glink *pg;
+
+	guard(mutex)(&__pmic_glink_lock);
+	pg = __pmic_glink;
+	if (!pg) {
+		/*
+		 * The SoCCP is attached rather than booted, so its channel can come up
+		 * before the platform device is bound. Failing the probe would close
+		 * the channel for good; keep it until pmic_glink_probe() attaches it.
+		 */
+		__pmic_glink_rpdev = rpdev;
+		return 0;
+	}
+
+	pmic_glink_attach_rpdev(pg, rpdev);
 
 	return 0;
 }
@@ -270,6 +288,8 @@ static void pmic_glink_rpmsg_remove(struct rpmsg_device *rpdev)
 	struct pmic_glink *pg;
 
 	guard(mutex)(&__pmic_glink_lock);
+	if (__pmic_glink_rpdev == rpdev)
+		__pmic_glink_rpdev = NULL;
 	pg = __pmic_glink;
 	if (!pg)
 		return;
@@ -354,6 +374,10 @@ static int pmic_glink_probe(struct platform_device *pdev)
 
 	mutex_lock(&__pmic_glink_lock);
 	__pmic_glink = pg;
+	if (__pmic_glink_rpdev) {
+		pmic_glink_attach_rpdev(pg, __pmic_glink_rpdev);
+		__pmic_glink_rpdev = NULL;
+	}
 	mutex_unlock(&__pmic_glink_lock);
 
 	return 0;
