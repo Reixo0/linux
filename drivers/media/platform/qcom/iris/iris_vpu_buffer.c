@@ -2072,16 +2072,21 @@ static u32 iris_vpu_ar50lt_enc_vpss_size(struct iris_inst *inst)
 	return hfi_buffer_vpss_enc_ar50lt(width, height, ds_enable, 0, 0);
 }
 
-static inline u32 size_dpb_opb(u32 height, u32 lcu_size)
+static inline u32 size_dpb_opb(u32 height, u32 lcu_size, bool ten_bit)
 {
 	u32 max_tile_height = ((height + lcu_size - 1) / lcu_size) * lcu_size + 8;
 	u32 dpb_opb = 3 * ((max_tile_height >> 3) * DMA_ALIGNMENT);
 	u32 num_luma_chrome_plane = 2;
 
+	/* 10-bit output samples take two bytes */
+	if (ten_bit)
+		dpb_opb *= 2;
+
 	return ALIGN(dpb_opb, DMA_ALIGNMENT) * num_luma_chrome_plane;
 }
 
-static u32 hfi_vpu4x_vp9d_lb_size(u32 frame_width, u32 frame_height, u32 num_vpp_pipes)
+static u32 hfi_vpu4x_vp9d_lb_size(u32 frame_width, u32 frame_height, u32 num_vpp_pipes,
+				  bool ten_bit)
 {
 	u32 vp9_top_lb, vp9_fe_left_lb, vp9_se_left_lb, dpb_opb, vp9d_qp, num_lcu_per_pipe;
 	u32 lcu_size = 64;
@@ -2115,7 +2120,7 @@ static u32 hfi_vpu4x_vp9d_lb_size(u32 frame_width, u32 frame_height, u32 num_vpp
 
 	vp9_se_left_lb = ALIGN(size_vpxd_lb_se_left_ctrl(frame_width, frame_height),
 			       DMA_ALIGNMENT);
-	dpb_opb = size_dpb_opb(frame_height, lcu_size);
+	dpb_opb = size_dpb_opb(frame_height, lcu_size, ten_bit);
 	vp9d_qp = ALIGN(size_vp9d_qp(frame_width, frame_height), DMA_ALIGNMENT);
 
 	return vp9_top_lb + vp9_fe_left_lb + (vp9_se_left_lb * num_vpp_pipes) +
@@ -2123,19 +2128,19 @@ static u32 hfi_vpu4x_vp9d_lb_size(u32 frame_width, u32 frame_height, u32 num_vpp
 }
 
 static u32 hfi_vpu4x_buffer_line_vp9d(u32 frame_width, u32 frame_height, u32 _yuv_bufcount_min,
-				      bool is_opb, u32 num_vpp_pipes)
+				      bool is_opb, u32 num_vpp_pipes, bool ten_bit)
 {
-	u32 lb_size = hfi_vpu4x_vp9d_lb_size(frame_width, frame_height, num_vpp_pipes);
+	u32 lb_size = hfi_vpu4x_vp9d_lb_size(frame_width, frame_height, num_vpp_pipes, ten_bit);
 	u32 dpb_obp_size = 0, lcu_size = 64;
 
 	if (is_opb)
-		dpb_obp_size = size_dpb_opb(frame_height, lcu_size) * num_vpp_pipes;
+		dpb_obp_size = size_dpb_opb(frame_height, lcu_size, ten_bit) * num_vpp_pipes;
 
 	return lb_size + dpb_obp_size;
 }
 
 static u32 hfi_vpu4x_buffer_line_h265d(u32 frame_width, u32 frame_height, bool is_opb,
-				       u32 num_vpp_pipes)
+				       u32 num_vpp_pipes, bool ten_bit)
 {
 	u32 num_lcu_per_pipe, fe_left_lb, se_left_lb, vsp_left_lb, top_lb, qp_size,
 	    dpb_obp = 0, lcu_size = 16;
@@ -2153,7 +2158,7 @@ static u32 hfi_vpu4x_buffer_line_h265d(u32 frame_width, u32 frame_height, bool i
 				FE_LFT_LR_DATA_LINE_NUMBERS;
 
 	if (is_opb)
-		dpb_obp = size_dpb_opb(frame_height, lcu_size) * num_vpp_pipes;
+		dpb_obp = size_dpb_opb(frame_height, lcu_size, ten_bit) * num_vpp_pipes;
 
 	se_left_lb = max_t(u32, (ALIGN(frame_height, BUFFER_ALIGNMENT_16_BYTES) >> 3) *
 				MAX_SE_NBR_CTRL_LCU16_LINE_BUFFER_SIZE,
@@ -2190,6 +2195,7 @@ static u32 iris_vpu4x_dec_line_size(struct iris_inst *inst)
 	struct v4l2_format *f = inst->fmt_src;
 	u32 height = f->fmt.pix_mp.height;
 	u32 width = f->fmt.pix_mp.width;
+	bool ten_bit = iris_fmt_is_10bit(inst->fmt_dst->fmt.pix_mp.pixelformat);
 	bool is_opb = false;
 
 	if (iris_split_mode_enabled(inst))
@@ -2198,10 +2204,11 @@ static u32 iris_vpu4x_dec_line_size(struct iris_inst *inst)
 	if (inst->codec == V4L2_PIX_FMT_H264)
 		return hfi_buffer_line_h264d(width, height, is_opb, num_vpp_pipes);
 	else if (inst->codec == V4L2_PIX_FMT_HEVC)
-		return hfi_vpu4x_buffer_line_h265d(width, height, is_opb, num_vpp_pipes);
+		return hfi_vpu4x_buffer_line_h265d(width, height, is_opb, num_vpp_pipes,
+						   ten_bit);
 	else if (inst->codec == V4L2_PIX_FMT_VP9)
 		return hfi_vpu4x_buffer_line_vp9d(width, height, out_min_count, is_opb,
-						  num_vpp_pipes);
+						  num_vpp_pipes, ten_bit);
 	else if (inst->codec == V4L2_PIX_FMT_AV1)
 		return hfi_buffer_line_av1d(width, height, is_opb, num_vpp_pipes);
 
