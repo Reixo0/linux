@@ -173,6 +173,9 @@ static int eusb2_repeater_init(struct phy *phy)
 	if (!of_property_read_u8(np, "qcom,tune-res-fsdif", &val))
 		regmap_write(regmap, EUSB2_TUNE_RES_FSDIF, val);
 
+	if (!of_property_read_u8(np, "qcom,tune-usb2-slew", &val))
+		regmap_write(regmap, EUSB2_TUNE_USB2_SLEW, val);
+
 	if (!of_property_read_s32(np, "qcom,squelch-detector-bp", &dt_val)) {
 		for (i = 0; i < ARRAY_SIZE(squelch_detector); i++) {
 			if (squelch_detector[i] == dt_val) {
