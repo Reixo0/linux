@@ -76,6 +76,7 @@ struct f_ncm {
 	struct sk_buff			*skb_tx_ndp;
 	u16				ndp_dgram_count;
 	struct hrtimer			task_timer;
+	unsigned int			task_timer_rearm;
 };
 
 static inline struct f_ncm *func_to_ncm(struct usb_function *f)
@@ -105,6 +106,8 @@ static inline struct f_ncm *func_to_ncm(struct usb_function *f)
 
 /* Delay for the transmit to wait before sending an unfilled NTB frame. */
 #define TX_TIMEOUT_NSECS	300000
+/* flush attempts of one NTB while every IN request is in flight: about 100 ms */
+#define TX_TIMEOUT_MAX_REARM	333
 
 /*
  * Although max mtu as dictated by u_ether is 15412 bytes, setting
@@ -1092,6 +1095,7 @@ static struct sk_buff *ncm_wrap_ntb(struct gether *port,
 			/* Note: we skip opts->next_ndp_index */
 
 			/* Start the timer. */
+			ncm->task_timer_rearm = 0;
 			hrtimer_start(&ncm->task_timer, TX_TIMEOUT_NSECS,
 				      HRTIMER_MODE_REL_SOFT);
 		}
@@ -1158,7 +1162,20 @@ static enum hrtimer_restart ncm_tx_timeout(struct hrtimer *data)
 		 *
 		 * This will call directly into u_ether's eth_start_xmit()
 		 */
-		netdev->netdev_ops->ndo_start_xmit(NULL, netdev);
+		if (netdev->netdev_ops->ndo_start_xmit(NULL, netdev) == NETDEV_TX_BUSY &&
+		    READ_ONCE(ncm->skb_tx_data) && !READ_ONCE(ncm->port.is_suspend) &&
+		    ncm->task_timer_rearm++ < TX_TIMEOUT_MAX_REARM)
+			/*
+			 * Every IN request is in flight, so the open NTB was
+			 * not sent, and nothing else sends it before it is
+			 * full.  Try again later.  hrtimer_start() rather than
+			 * hrtimer_forward_now(): ncm_wrap_ntb() may start this
+			 * timer for a new NTB on another CPU meanwhile (under
+			 * u_ether's lock, which is not held here), and two
+			 * hrtimer_start() calls simply leave the later expiry.
+			 */
+			hrtimer_start(&ncm->task_timer, TX_TIMEOUT_NSECS,
+				      HRTIMER_MODE_REL_SOFT);
 	}
 	return HRTIMER_NORESTART;
 }
