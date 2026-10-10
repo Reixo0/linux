@@ -80,6 +80,7 @@ enum qca_flags {
 	QCA_BT_OFF,
 	QCA_ROM_FW,
 	QCA_DEBUGFS_CREATED,
+	QCA_DISCARD_RX,
 };
 
 enum qca_capabilities {
@@ -1284,6 +1285,14 @@ static int qca_recv(struct hci_uart *hu, const void *data, int count)
 	if (!test_bit(HCI_UART_REGISTERED, &hu->flags))
 		return -EUNATCH;
 
+	if (test_bit(QCA_DISCARD_RX, &qca->flags)) {
+		bt_dev_dbg(hu->hdev, "Discarding %d bytes during baudrate change",
+			   count);
+		print_hex_dump_debug("hci_qca rx: ", DUMP_PREFIX_OFFSET, 16, 1,
+				     data, min(count, 32), false);
+		return count;
+	}
+
 	qca->rx_skb = h4_recv_buf(hu, qca->rx_skb, data, count,
 				  qca_recv_pkts, ARRAY_SIZE(qca_recv_pkts));
 	if (IS_ERR(qca->rx_skb)) {
@@ -1556,6 +1565,17 @@ static int qca_set_speed(struct hci_uart *hu, enum qca_speed_type speed_type)
 			set_bit(QCA_DROP_VENDOR_EVENT, &qca->flags);
 			break;
 
+		case QCA_WCN7860:
+			/* Nothing waits for the replies to the peripheral and
+			 * HCI baudrate commands. The controller sends them once
+			 * RTS is asserted again after the host changed its
+			 * speed, and that burst does not start with a valid
+			 * H:4 packet type, so the reassembly fails with
+			 * -EILSEQ. Discard what arrives in that window.
+			 */
+			set_bit(QCA_DISCARD_RX, &qca->flags);
+			break;
+
 		default:
 			break;
 		}
@@ -1584,6 +1604,11 @@ error:
 
 		default:
 			break;
+		}
+
+		if (test_bit(QCA_DISCARD_RX, &qca->flags)) {
+			msleep(20);
+			clear_bit(QCA_DISCARD_RX, &qca->flags);
 		}
 
 		switch (soc_type) {
