@@ -368,11 +368,36 @@ static int iris_hfi_gen2_set_colorspace(struct iris_inst *inst, u32 plane)
 	if (pixmp->colorspace != V4L2_COLORSPACE_DEFAULT ||
 	    pixmp->ycbcr_enc != V4L2_YCBCR_ENC_DEFAULT ||
 	    pixmp->xfer_func != V4L2_XFER_FUNC_DEFAULT) {
+		u32 ycbcr_enc = pixmp->ycbcr_enc;
+		u32 xfer_func = pixmp->xfer_func;
+
+		/*
+		 * A colorspace implies its transfer function and Y'CbCr
+		 * encoding: resolve the defaults instead of signalling the
+		 * reserved codes in the colour description.
+		 */
+		if (pixmp->colorspace != V4L2_COLORSPACE_DEFAULT) {
+			if (xfer_func == V4L2_XFER_FUNC_DEFAULT)
+				xfer_func = V4L2_MAP_XFER_FUNC_DEFAULT(pixmp->colorspace);
+			if (ycbcr_enc == V4L2_YCBCR_ENC_DEFAULT)
+				ycbcr_enc = V4L2_MAP_YCBCR_ENC_DEFAULT(pixmp->colorspace);
+		}
+
 		colour_description_present_flag = 1;
 		video_signal_type_present_flag = 1;
 		primaries = iris_hfi_gen2_get_color_primaries(pixmp->colorspace);
-		matrix_coeff = iris_hfi_gen2_get_matrix_coefficients(pixmp->ycbcr_enc);
-		transfer_char = iris_hfi_gen2_get_transfer_char(pixmp->xfer_func);
+		matrix_coeff = iris_hfi_gen2_get_matrix_coefficients(ycbcr_enc);
+		transfer_char = iris_hfi_gen2_get_transfer_char(xfer_func);
+
+		/*
+		 * V4L2 has no separate BT.601 transfer function: SMPTE 170M
+		 * uses V4L2_XFER_FUNC_709. The bitstream has its own code for
+		 * it, so signal SMPTE 170M as 6/6/6 like other encoders do,
+		 * not as the mixed 6/1/6.
+		 */
+		if (pixmp->colorspace == V4L2_COLORSPACE_SMPTE170M &&
+		    transfer_char == HFI_TRANSFER_BT709)
+			transfer_char = HFI_TRANSFER_BT601_525_OR_625;
 	}
 
 	if (pixmp->quantization != V4L2_QUANTIZATION_DEFAULT) {
