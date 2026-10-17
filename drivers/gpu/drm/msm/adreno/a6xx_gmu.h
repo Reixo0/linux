@@ -60,6 +60,13 @@ struct a6xx_bcm {
 /* The GMU does automatic IFPC (intra-frame power collapse) */
 #define GMU_IDLE_STATE_IFPC 3
 
+/*
+ * How long the GMU may take to report ACTIVE after a fenced write woke the GPU
+ * out of IFPC: the 100 ms of the downstream driver. Normally the first read
+ * already returns ACTIVE; only a GMU that does not wake up uses the budget.
+ */
+#define GMU_ACTIVE_TIMEOUT_US 100000
+
 struct a6xx_gmu {
 	struct device *dev;
 

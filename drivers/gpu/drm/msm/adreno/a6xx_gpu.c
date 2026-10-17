@@ -84,12 +84,14 @@ static int fenced_write(struct a6xx_gpu *a6xx_gpu, u32 offset, u32 value, u32 ma
 	if (!gmu_poll_timeout(gmu, REG_A6XX_GMU_AHB_FENCE_STATUS, status,
 			fence_status_check(gpu, offset, value, status, mask), 0, 1000)) {
 		/*
-		 * The 'delay' warning is here because the pause to print this
-		 * warning will allow gpu to move to power collapse which
-		 * defeats the purpose of continuous polling for 2 ms
+		 * The 'delay' message is here because the pause to print this
+		 * message will allow gpu to move to power collapse which
+		 * defeats the purpose of continuous polling for 2 ms.
+		 * The write did land, only late: not an error (the downstream
+		 * driver logs this at info level too).
 		 */
-		dev_err_ratelimited(gmu->dev, "delay in fenced register write (0x%x)\n",
-				offset);
+		dev_info_ratelimited(gmu->dev, "delay in fenced register write (0x%x)\n",
+				     offset);
 		return 0;
 	}
 

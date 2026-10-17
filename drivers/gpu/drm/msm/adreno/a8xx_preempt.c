@@ -151,6 +151,7 @@ void a8xx_preempt_trigger(struct msm_gpu *gpu)
 	unsigned long flags;
 	struct msm_ringbuffer *ring;
 	unsigned int cntl;
+	int ret;
 	bool sysprof;
 
 	if (gpu->nr_rings == 1)
@@ -228,13 +229,22 @@ void a8xx_preempt_trigger(struct msm_gpu *gpu)
 	/* Set the keepalive bit to keep the GPU ON until preemption is complete */
 	a8xx_preempt_keepalive_vote(gpu, true);
 
-	a6xx_fenced_write(a6xx_gpu,
-		REG_A8XX_CP_CONTEXT_SWITCH_SMMU_INFO, a6xx_gpu->preempt_smmu_iova[ring->id],
-		BIT(1), true);
-
-	a6xx_fenced_write(a6xx_gpu,
-		REG_A8XX_CP_CONTEXT_SWITCH_PRIV_NON_SECURE_RESTORE_ADDR,
-		a6xx_gpu->preempt_iova[ring->id], BIT(1), true);
+	/*
+	 * The first fenced write brings the GPU out of IFPC. Let the GMU finish
+	 * that transition before the CP is asked to switch rings.
+	 */
+	ret = a6xx_fenced_write(a6xx_gpu, REG_A8XX_CP_CONTEXT_SWITCH_SMMU_INFO,
+				a6xx_gpu->preempt_smmu_iova[ring->id], BIT(1), true);
+	if (!ret)
+		ret = a6xx_gmu_wait_for_active(&a6xx_gpu->gmu);
+	if (!ret)
+		ret = a6xx_fenced_write(a6xx_gpu,
+					REG_A8XX_CP_CONTEXT_SWITCH_PRIV_NON_SECURE_RESTORE_ADDR,
+					a6xx_gpu->preempt_iova[ring->id], BIT(1), true);
+	if (ret) {
+		preempt_trigger_fault(gpu, PREEMPT_START, ret);
+		return;
+	}
 
 	a6xx_gpu->next_ring = ring;
 
@@ -254,6 +264,8 @@ void a8xx_preempt_trigger(struct msm_gpu *gpu)
 	set_preempt_state(a6xx_gpu, PREEMPT_TRIGGERED);
 
 	/* Trigger the preemption */
-	a6xx_fenced_write(a6xx_gpu, REG_A8XX_CP_CONTEXT_SWITCH_CNTL, cntl, BIT(1), false);
+	ret = a6xx_fenced_write(a6xx_gpu, REG_A8XX_CP_CONTEXT_SWITCH_CNTL, cntl, BIT(1), false);
+	if (ret)
+		preempt_trigger_fault(gpu, PREEMPT_TRIGGERED, ret);
 }
 

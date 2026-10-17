@@ -289,6 +289,7 @@ int a6xx_gmu_resume(struct a6xx_gpu *gpu);
 int a6xx_gmu_stop(struct a6xx_gpu *gpu);
 
 int a6xx_gmu_wait_for_idle(struct a6xx_gmu *gmu);
+int a6xx_gmu_wait_for_active(struct a6xx_gmu *gmu);
 
 bool a6xx_gmu_isidle(struct a6xx_gmu *gmu);
 

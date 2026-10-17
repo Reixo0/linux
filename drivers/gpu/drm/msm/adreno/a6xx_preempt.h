@@ -80,3 +80,24 @@ static inline struct msm_ringbuffer *get_next_ring(struct msm_gpu *gpu)
 	return NULL;
 }
 
+/*
+ * A register write of the preemption trigger was dropped (a6xx_fenced_write()
+ * gave up after its full 2 ms: -ETIMEDOUT; a write that only landed late
+ * returns 0 and is not a fault), or the GMU did not reach ACTIVE within
+ * GMU_ACTIVE_TIMEOUT_US: the CP never saw a complete request, so do not wait
+ * for the preemption timer and recover now.
+ */
+static inline void preempt_trigger_fault(struct msm_gpu *gpu,
+					 enum a6xx_preempt_state from, int err)
+{
+	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(to_adreno_gpu(gpu));
+
+	if (!try_preempt_state(a6xx_gpu, from, PREEMPT_FAULTED))
+		return;
+
+	timer_delete(&a6xx_gpu->preempt_timer);
+	a6xx_gpu->next_ring = NULL;
+
+	dev_err(gpu->dev->dev, "%s: preemption trigger failed: %d\n", gpu->name, err);
+	kthread_queue_work(gpu->worker, &gpu->recover_work);
+}

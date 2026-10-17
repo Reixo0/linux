@@ -301,6 +301,38 @@ int a6xx_gmu_wait_for_idle(struct a6xx_gmu *gmu)
 	return spin_until(a6xx_gmu_check_idle_level(gmu));
 }
 
+/*
+ * A fenced register write wakes the GPU out of IFPC, but the GMU may still be in
+ * the middle of its wake-up sequence when the write lands. Wait until the GMU
+ * reports the ACTIVE power state before the CP is asked to do something that can
+ * interrupt that sequence, such as a preemption. Usable in atomic context.
+ */
+int a6xx_gmu_wait_for_active(struct a6xx_gmu *gmu)
+{
+	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
+	struct adreno_gpu *adreno_gpu = &a6xx_gpu->base;
+	u32 reg, val;
+	int ret;
+
+	if (adreno_has_gmu_wrapper(adreno_gpu) || adreno_has_rgmu(adreno_gpu))
+		return 0;
+
+	if (gmu->idle_level != GMU_IDLE_STATE_IFPC)
+		return 0;
+
+	reg = adreno_is_a8xx(adreno_gpu) ? REG_A8XX_GPU_GMU_CX_GMU_RPMH_POWER_STATE :
+					   REG_A6XX_GPU_GMU_CX_GMU_RPMH_POWER_STATE;
+
+	ret = gmu_poll_timeout_atomic(gmu, reg, val,
+				      (val & 0xf) == GMU_IDLE_STATE_ACTIVE, 10,
+				      GMU_ACTIVE_TIMEOUT_US);
+	if (ret)
+		dev_err_ratelimited(gmu->dev,
+				    "GMU did not reach the active state: 0x%x\n", val);
+
+	return ret;
+}
+
 static int a6xx_gmu_start(struct a6xx_gmu *gmu)
 {
 	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
