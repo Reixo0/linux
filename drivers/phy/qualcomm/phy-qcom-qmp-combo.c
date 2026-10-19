@@ -4294,6 +4294,35 @@ static int qmp_combo_com_exit(struct qmp_combo *qmp, bool force)
 	return 0;
 }
 
+/*
+ * The number of DisplayPort lanes the PHY routes to the connector in @mode:
+ * all four in DP-only mode (USB Type-C pin assignments C and E), two when the
+ * other pair carries USB3 (pin assignments D and F), none in USB3-only mode.
+ */
+static int qmp_combo_dp_lanes(enum qmpphy_mode mode)
+{
+	switch (mode) {
+	case QMPPHY_MODE_DP_ONLY:
+		return 4;
+	case QMPPHY_MODE_USB3DP:
+		return 2;
+	default:
+		return 0;
+	}
+}
+
+/*
+ * Report the DP lane count of the current mode as the bus width of the DP
+ * PHY, so that the DisplayPort controller can size its link to it.
+ */
+static void qmp_combo_dp_update_lanes(struct qmp_combo *qmp)
+{
+	lockdep_assert_held(&qmp->phy_mutex);
+
+	if (qmp->dp_phy)
+		phy_set_bus_width(qmp->dp_phy, qmp_combo_dp_lanes(qmp->qmpphy_mode));
+}
+
 static int qmp_combo_dp_init(struct phy *phy)
 {
 	struct qmp_combo *qmp = phy_get_drvdata(phy);
@@ -4562,6 +4591,7 @@ static int qmp_combo_reconfigure_phy(struct qmp_combo *qmp, enum qmpphy_mode new
 	qmp_combo_com_exit(qmp, true);
 
 	qmp->qmpphy_mode = new_mode;
+	qmp_combo_dp_update_lanes(qmp);
 
 	/* Now everything's powered down, power up the right PHYs */
 	qmp_combo_com_init(qmp, true);
@@ -5687,6 +5717,11 @@ static int qmp_combo_probe(struct platform_device *pdev)
 
 		phy_set_drvdata(qmp->usb4_phy, qmp);
 	}
+
+	/* The Type-C mux may already have picked a mode */
+	mutex_lock(&qmp->phy_mutex);
+	qmp_combo_dp_update_lanes(qmp);
+	mutex_unlock(&qmp->phy_mutex);
 
 	if (usb_np == dev->of_node)
 		phy_provider = devm_of_phy_provider_register(dev, qmp_combo_phy_xlate);
