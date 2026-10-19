@@ -13,11 +13,17 @@
 #include <drm/drm_print.h>
 
 #include <linux/io.h>
+#include <linux/moduleparam.h>
 #include <linux/phy/phy.h>
 #include <linux/types.h>
 #include <asm/byteorder.h>
 
 #define DP_INTF_CONFIG_DATABUS_WIDEN     BIT(4)
+
+static unsigned int dp_max_lanes;
+module_param(dp_max_lanes, uint, 0600);
+MODULE_PARM_DESC(dp_max_lanes,
+		 "limit DisplayPort to 1, 2 or 4 lanes from the next plug on (0 = as the PHY and DT allow, default)");
 
 struct msm_dp_panel_private {
 	struct device *dev;
@@ -108,7 +114,14 @@ u32 msm_dp_stream_reg(enum msm_dp_stream_id id, u32 reg)
  */
 static int msm_dp_panel_routed_lanes(struct msm_dp_panel_private *panel)
 {
-	return phy_get_bus_width(panel->phy);
+	int lanes = phy_get_bus_width(panel->phy);
+	unsigned int max = READ_ONCE(dp_max_lanes);
+
+	/* The module parameter can pretend that fewer lanes are routed */
+	if ((max == 1 || max == 2 || max == 4) && (lanes <= 0 || (int)max < lanes))
+		lanes = max;
+
+	return lanes;
 }
 
 /**
@@ -393,11 +406,12 @@ int msm_dp_panel_read_link_caps(struct msm_dp_panel *msm_dp_panel,
 	}
 
 	drm_info(connector->dev,
-		 "[CONNECTOR:%d:%s] sink %u lanes @ %u kHz, PHY %d lanes, DT %u lanes @ %u kHz: link up to %u lanes @ %u kHz\n",
+		 "[CONNECTOR:%d:%s] sink %u lanes @ %u kHz, PHY %d lanes, DT %u lanes @ %u kHz, dp_max_lanes %u: link up to %u lanes @ %u kHz\n",
 		 connector->base.id, connector->name,
 		 drm_dp_max_lane_count(msm_dp_panel->dpcd),
-		 drm_dp_max_link_rate(msm_dp_panel->dpcd), panel->routed_lanes,
+		 drm_dp_max_link_rate(msm_dp_panel->dpcd), phy_get_bus_width(panel->phy),
 		 panel->link->max_dp_lanes, panel->link->max_dp_link_rate,
+		 READ_ONCE(dp_max_lanes),
 		 msm_dp_panel->link_info.num_lanes, msm_dp_panel->link_info.rate);
 
 	if (drm_dp_is_branch(msm_dp_panel->dpcd)) {
