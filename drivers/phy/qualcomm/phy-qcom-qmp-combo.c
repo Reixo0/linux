@@ -2643,6 +2643,10 @@ struct qmp_combo {
 	enum tbt_phy_submode usb4_phy_submode;
 	unsigned int usb4_init_count;
 
+	/* A Type-C mode switch deferred while the DP PHY was powered on */
+	bool mode_switch_pending;
+	enum qmpphy_mode pending_qmpphy_mode;
+
 	struct clk_fixed_rate pipe_clk_fixed;
 	struct clk_hw dp_link_hw;
 	struct clk_hw dp_pixel_hw;
@@ -4313,15 +4317,24 @@ static int qmp_combo_dp_lanes(enum qmpphy_mode mode)
 
 /*
  * Report the DP lane count of the current mode as the bus width of the DP
- * PHY, so that the DisplayPort controller can size its link to it.
+ * PHY, so that the DisplayPort controller can size its link to it. While a
+ * mode switch waits for the DP link to go down, report the lanes of the mode
+ * the next link will get.
  */
 static void qmp_combo_dp_update_lanes(struct qmp_combo *qmp)
 {
+	enum qmpphy_mode mode = qmp->qmpphy_mode;
+
 	lockdep_assert_held(&qmp->phy_mutex);
 
+	if (qmp->mode_switch_pending)
+		mode = qmp->pending_qmpphy_mode;
+
 	if (qmp->dp_phy)
-		phy_set_bus_width(qmp->dp_phy, qmp_combo_dp_lanes(qmp->qmpphy_mode));
+		phy_set_bus_width(qmp->dp_phy, qmp_combo_dp_lanes(mode));
 }
+
+static int qmp_combo_reconfigure_phy(struct qmp_combo *qmp, enum qmpphy_mode new_mode);
 
 static int qmp_combo_dp_init(struct phy *phy)
 {
@@ -4353,6 +4366,20 @@ static int qmp_combo_dp_exit(struct phy *phy)
 	qmp_combo_com_exit(qmp, false);
 
 	qmp->dp_init_count--;
+
+	/* The DP link is down: apply the Type-C mode switch it held back */
+	if (qmp->mode_switch_pending && !qmp->dp_powered_on) {
+		dev_dbg(qmp->dev, "dp_exit: switching from qmpphy mode %d to deferred %d\n",
+			qmp->qmpphy_mode, qmp->pending_qmpphy_mode);
+		if (qmp->init_count) {
+			qmp_combo_reconfigure_phy(qmp, qmp->pending_qmpphy_mode);
+		} else {
+			/* Nothing is powered: the next init comes up in this mode */
+			qmp->qmpphy_mode = qmp->pending_qmpphy_mode;
+			qmp->mode_switch_pending = false;
+			qmp_combo_dp_update_lanes(qmp);
+		}
+	}
 
 	mutex_unlock(&qmp->phy_mutex);
 
@@ -4591,6 +4618,7 @@ static int qmp_combo_reconfigure_phy(struct qmp_combo *qmp, enum qmpphy_mode new
 	qmp_combo_com_exit(qmp, true);
 
 	qmp->qmpphy_mode = new_mode;
+	qmp->mode_switch_pending = false;
 	qmp_combo_dp_update_lanes(qmp);
 
 	/* Now everything's powered down, power up the right PHYs */
@@ -5240,11 +5268,21 @@ static int qmp_combo_typec_mux_set(struct typec_mux_dev *mux, struct typec_mux_s
 
 	if (new_mode == qmp->qmpphy_mode) {
 		dev_dbg(qmp->dev, "typec_mux_set: same qmpphy mode, bail out\n");
+		/* Back to the current mode: drop a switch still waiting */
+		if (qmp->mode_switch_pending) {
+			qmp->mode_switch_pending = false;
+			qmp_combo_dp_update_lanes(qmp);
+		}
 		return 0;
 	}
 
 	if (qmp->qmpphy_mode != QMPPHY_MODE_USB3_ONLY && qmp->dp_powered_on) {
-		dev_dbg(qmp->dev, "typec_mux_set: DP PHY is still in use, delaying switch\n");
+		/* Switch once the DP link is down, in qmp_combo_dp_exit() */
+		dev_dbg(qmp->dev, "typec_mux_set: DP PHY is still in use, delaying switch to mode %d\n",
+			new_mode);
+		qmp->pending_qmpphy_mode = new_mode;
+		qmp->mode_switch_pending = true;
+		qmp_combo_dp_update_lanes(qmp);
 		return 0;
 	}
 
