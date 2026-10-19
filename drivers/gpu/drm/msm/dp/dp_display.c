@@ -12,10 +12,12 @@
 #include <linux/phy/phy.h>
 #include <linux/delay.h>
 #include <linux/string_choices.h>
+#include <linux/workqueue.h>
 #include <drm/display/drm_dp_aux_bus.h>
 #include <drm/display/drm_hdmi_audio_helper.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_panel.h>
+#include <drm/drm_probe_helper.h>
 
 #include "msm_drv.h"
 #include "msm_kms.h"
@@ -58,6 +60,17 @@ struct msm_dp_display_private {
 	bool plugged;
 	/* unplugged while the stream was on: retrain on the next plug */
 	bool link_lost;
+	/*
+	 * The link cannot carry the mode: link_status_work reports the
+	 * connector's link-status BAD, with one hotplug event until a mode
+	 * fits again or the sink changes. Protected by plugged_lock, like the
+	 * trained link last logged (0 until the first one since the plug).
+	 */
+	bool link_bad;
+	bool link_bad_notified;
+	u32 logged_lanes;
+	u32 logged_rate;
+	struct work_struct link_status_work;
 
 	struct drm_device *drm_dev;
 
@@ -217,6 +230,71 @@ void msm_dp_display_signal_audio_complete(struct msm_dp *msm_dp_display)
 	complete_all(&dp->audio_comp);
 }
 
+static void msm_dp_display_link_status_work(struct work_struct *work)
+{
+	struct msm_dp_display_private *dp = container_of(work,
+			struct msm_dp_display_private, link_status_work);
+	struct drm_connector *connector = dp->msm_dp_display.connector;
+	bool notify;
+
+	scoped_guard(mutex, &dp->plugged_lock) {
+		/* recovered or unplugged in the meantime */
+		if (!dp->link_bad)
+			return;
+
+		notify = !dp->link_bad_notified;
+		dp->link_bad_notified = true;
+	}
+
+	/* This takes connection_mutex, which nests outside plugged_lock */
+	drm_connector_set_link_status_property(connector, DRM_MODE_LINK_STATUS_BAD);
+
+	/*
+	 * Only once: the event can make fbdev retry the modeset right away,
+	 * and a link that keeps failing must not turn that into a loop.
+	 */
+	if (notify)
+		drm_kms_helper_connector_hotplug_event(connector);
+}
+
+/*
+ * The link cannot carry the current mode: have userspace do a new modeset.
+ * Mode validation takes the trained link into account, so the modes it
+ * probes next are ones the link can carry. An atomic enable cannot fail and
+ * holds the locks drm_connector_set_link_status_property() takes, hence the
+ * work item. eDP has a fixed panel mode to retry with, so leave it alone.
+ */
+static void msm_dp_display_link_bad(struct msm_dp_display_private *dp)
+{
+	lockdep_assert_held(&dp->plugged_lock);
+
+	if (dp->msm_dp_display.is_edp)
+		return;
+
+	dp->link_bad = true;
+	schedule_work(&dp->link_status_work);
+}
+
+/* A new sink: forget the link state of the previous one */
+static void msm_dp_display_reset_link_status(struct msm_dp_display_private *dp)
+{
+	lockdep_assert_held(&dp->plugged_lock);
+
+	dp->link_bad = false;
+	dp->link_bad_notified = false;
+	dp->logged_lanes = 0;
+	dp->logged_rate = 0;
+}
+
+/* The running link is wider or faster than the link capabilities allow */
+static bool msm_dp_display_link_exceeds_caps(struct msm_dp_display_private *dp)
+{
+	const struct msm_dp_link_info *caps = &dp->panel->link_info;
+	const struct msm_dp_link_info *link = &dp->link->link_params;
+
+	return link->num_lanes > caps->num_lanes || link->rate > caps->rate;
+}
+
 static int msm_dp_display_bind(struct device *dev, struct device *master,
 			   void *data)
 {
@@ -247,6 +325,7 @@ static void msm_dp_display_unbind(struct device *dev, struct device *master,
 	struct msm_dp_display_private *dp = dev_get_dp_display_private(dev);
 	struct msm_drm_private *priv = dev_get_drvdata(master);
 
+	cancel_work_sync(&dp->link_status_work);
 	of_dp_aux_depopulate_bus(dp->aux);
 
 	msm_dp_aux_unregister(dp->aux);
@@ -294,6 +373,16 @@ static int msm_dp_display_process_hpd_high(struct msm_dp_display_private *dp)
 	rc = msm_dp_panel_read_link_caps(dp->panel, connector);
 	if (rc)
 		goto end;
+
+	/*
+	 * Mode validation also holds the modes to the last trained link.
+	 * Without a stream that link belongs to the previous sink or pin
+	 * assignment: start again from the capabilities just read.
+	 */
+	if (!dp->msm_dp_display.power_on) {
+		dp->link->link_params.num_lanes = dp->panel->link_info.num_lanes;
+		dp->link->link_params.rate = dp->panel->link_info.rate;
+	}
 
 	drm_edid = drm_edid_read_ddc(connector, &dp->aux->ddc);
 	drm_edid_connector_update(connector, drm_edid);
@@ -437,7 +526,14 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
 
 		msm_dp_display_host_phy_init(dp);
 
-		return msm_dp_display_process_hpd_high(dp);
+		ret = msm_dp_display_process_hpd_high(dp);
+
+		/* A running link that no longer fits needs a new modeset */
+		if (!ret && dp->msm_dp_display.power_on &&
+		    msm_dp_display_link_exceeds_caps(dp))
+			msm_dp_display_link_bad(dp);
+
+		return ret;
 	}
 
 	ret = pm_runtime_resume_and_get(&pdev->dev);
@@ -445,6 +541,8 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
 		DRM_ERROR("failed to pm_runtime_resume\n");
 		return ret;
 	}
+
+	msm_dp_display_reset_link_status(dp);
 
 	msm_dp_aux_enable_xfers(dp->aux, true);
 
@@ -454,12 +552,20 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
 
 	/*
 	 * A quick replug can come back with the CRTC still enabled and no
-	 * atomic_enable to follow: retrain here, once per unplug.
+	 * atomic_enable to follow: retrain here, once per unplug. A sink or
+	 * pin assignment that cannot take the running link needs a new
+	 * modeset instead, as does a link that does not train again.
 	 */
 	if (!ret && dp->link_lost && dp->msm_dp_display.power_on) {
-		int rc = msm_dp_ctrl_retrain_link(dp->ctrl, dp->panel);
+		if (msm_dp_display_link_exceeds_caps(dp)) {
+			msm_dp_display_link_bad(dp);
+		} else {
+			int rc = msm_dp_ctrl_retrain_link(dp->ctrl, dp->panel);
 
-		drm_dbg_dp(dp->drm_dev, "replug while streaming: retrain rc=%d\n", rc);
+			drm_dbg_dp(dp->drm_dev, "replug while streaming: retrain rc=%d\n", rc);
+			if (rc)
+				msm_dp_display_link_bad(dp);
+		}
 	}
 	dp->link_lost = false;
 
@@ -502,6 +608,8 @@ static int msm_dp_hpd_unplug_handle(struct msm_dp_display_private *dp)
 
 	if (!dp->plugged)
 		return 0;
+
+	msm_dp_display_reset_link_status(dp);
 
 	if (dp->msm_dp_display.power_on)
 		dp->link_lost = true;
@@ -698,7 +806,8 @@ static int msm_dp_display_prepare_link(struct msm_dp_display_private *dp)
 	rc = msm_dp_ctrl_on_link(dp->ctrl, dp->panel);
 	if (rc) {
 		DRM_ERROR("Failed link training (rc=%d)\n", rc);
-		// TODO: schedule drm_connector_set_link_status_property()
+		scoped_guard(mutex, &dp->plugged_lock)
+			msm_dp_display_link_bad(dp);
 		return rc;
 	}
 
@@ -722,6 +831,55 @@ static int msm_dp_display_enable(struct msm_dp_display_private *dp,
 		msm_dp_display->power_on = true;
 
 	return rc;
+}
+
+/*
+ * Link training falls back to a lower rate and then fewer lanes until the
+ * link trains, regardless of the bandwidth the mode needs. Log the link it
+ * reached, once per plug and whenever it changes, and if the mode does not
+ * fit in it, have userspace pick another one.
+ */
+static void msm_dp_display_check_link(struct msm_dp_display_private *dp)
+{
+	const struct msm_dp_link_info *trained = &dp->link->link_params;
+	const struct msm_dp_link_info *caps = &dp->panel->link_info;
+	const struct msm_dp_display_mode *mode = &dp->panel->msm_dp_mode;
+	struct drm_connector *connector = dp->msm_dp_display.connector;
+	u32 pclk_khz = mode->drm_mode.clock;
+	u32 mode_kbps, link_kbps;
+
+	if (dp->msm_dp_display.is_edp || dp->panel->video_test)
+		return;
+
+	if (mode->out_fmt_is_yuv_420)
+		pclk_khz /= 2;
+
+	/* the units of msm_dp_display_mode_valid(): 8 bits per link symbol */
+	mode_kbps = pclk_khz * mode->bpp;
+	link_kbps = trained->num_lanes * trained->rate * 8;
+
+	guard(mutex)(&dp->plugged_lock);
+
+	if (trained->num_lanes != dp->logged_lanes || trained->rate != dp->logged_rate) {
+		drm_info(dp->drm_dev,
+			 "[CONNECTOR:%d:%s] link trained to %u lanes @ %u kHz (up to %u lanes @ %u kHz): %s at %u bpp needs %u of %u Mbit/s\n",
+			 connector->base.id, connector->name,
+			 trained->num_lanes, trained->rate, caps->num_lanes, caps->rate,
+			 mode->drm_mode.name, mode->bpp, mode_kbps / 1000, link_kbps / 1000);
+		dp->logged_lanes = trained->num_lanes;
+		dp->logged_rate = trained->rate;
+	}
+
+	if (mode_kbps > link_kbps) {
+		drm_info(dp->drm_dev,
+			 "[CONNECTOR:%d:%s] %s does not fit in the trained link, asking for another mode\n",
+			 connector->base.id, connector->name, mode->drm_mode.name);
+		msm_dp_display_link_bad(dp);
+	} else {
+		/* The mode fits: report a later failure again */
+		dp->link_bad = false;
+		dp->link_bad_notified = false;
+	}
 }
 
 static int msm_dp_display_post_enable(struct msm_dp *msm_dp_display)
@@ -1348,6 +1506,7 @@ static int msm_dp_display_probe(struct platform_device *pdev)
 	dp->hpd_isr_status = 0;
 
 	mutex_init(&dp->plugged_lock);
+	INIT_WORK(&dp->link_status_work, msm_dp_display_link_status_work);
 
 	rc = msm_dp_display_get_io(dp);
 	if (rc)
@@ -1574,6 +1733,8 @@ void msm_dp_display_atomic_enable(struct msm_dp *msm_dp_display,
 	rc = msm_dp_display_enable(dp, dp->panel);
 	if (rc)
 		DRM_ERROR("DP display enable failed, rc=%d\n", rc);
+	else
+		msm_dp_display_check_link(dp);
 
 	rc = msm_dp_display_post_enable(msm_dp_display);
 	if (rc) {
