@@ -13,6 +13,7 @@
 #include "dp_link.h"
 
 struct edid;
+struct phy;
 
 struct msm_dp_display_mode {
 	struct drm_display_mode drm_mode;
@@ -61,6 +62,7 @@ int msm_dp_panel_deinit(struct msm_dp_panel *msm_dp_panel);
 int msm_dp_panel_timing_cfg(struct msm_dp_panel *msm_dp_panel, bool wide_bus_en);
 int msm_dp_panel_read_link_caps(struct msm_dp_panel *msm_dp_panel,
 				struct drm_connector *connector);
+bool msm_dp_panel_routed_lanes_changed(struct msm_dp_panel *msm_dp_panel);
 u32 msm_dp_panel_get_mode_bpp(struct msm_dp_panel *msm_dp_panel, u32 mode_max_bpp,
 			u32 mode_pclk_khz);
 void msm_dp_panel_handle_sink_request(struct msm_dp_panel *msm_dp_panel,
@@ -102,7 +104,7 @@ static inline bool is_lane_count_valid(u32 lane_count)
 u32 msm_dp_stream_reg(enum msm_dp_stream_id id, u32 reg);
 
 struct msm_dp_panel *msm_dp_panel_get(struct device *dev, struct drm_dp_aux *aux,
-			      struct msm_dp_link *link,
+			      struct msm_dp_link *link, struct phy *phy,
 			      void __iomem *link_base,
 			      void __iomem *mst2link_base,
 			      void __iomem *mst3link_base,

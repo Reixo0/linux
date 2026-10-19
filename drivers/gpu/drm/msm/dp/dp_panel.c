@@ -13,6 +13,7 @@
 #include <drm/drm_print.h>
 
 #include <linux/io.h>
+#include <linux/phy/phy.h>
 #include <linux/types.h>
 #include <asm/byteorder.h>
 
@@ -24,11 +25,14 @@ struct msm_dp_panel_private {
 	struct msm_dp_panel msm_dp_panel;
 	struct drm_dp_aux *aux;
 	struct msm_dp_link *link;
+	struct phy *phy;
 	void __iomem *link_base;
 	void __iomem *mst2link_base;
 	void __iomem *mst3link_base;
 	void __iomem *pixel_base;
 	bool panel_on;
+	/* routed lanes the link capabilities were last read with */
+	int routed_lanes;
 };
 
 u32 msm_dp_stream_reg(enum msm_dp_stream_id id, u32 reg)
@@ -94,6 +98,33 @@ u32 msm_dp_stream_reg(enum msm_dp_stream_id id, u32 reg)
 	default:
 		return reg;
 	}
+}
+
+/*
+ * The number of DP lanes the PHY routes to the connector, or 0 if it does not
+ * say. Behind a USB-C connector the PHY follows the DisplayPort alternate
+ * mode's pin assignment: four lanes for C and E, two for D and F, where the
+ * other two carry USB3.
+ */
+static int msm_dp_panel_routed_lanes(struct msm_dp_panel_private *panel)
+{
+	return phy_get_bus_width(panel->phy);
+}
+
+/**
+ * msm_dp_panel_routed_lanes_changed() - check the PHY's lanes against the caps
+ * @msm_dp_panel: DP panel
+ *
+ * Returns: true if the number of lanes the PHY routes to the connector changed
+ * since the link capabilities were read, e.g. because the USB-C mux switched
+ * the pin assignment, and the link capabilities have to be read again.
+ */
+bool msm_dp_panel_routed_lanes_changed(struct msm_dp_panel *msm_dp_panel)
+{
+	struct msm_dp_panel_private *panel =
+		container_of(msm_dp_panel, struct msm_dp_panel_private, msm_dp_panel);
+
+	return msm_dp_panel_routed_lanes(panel) != panel->routed_lanes;
 }
 
 static inline u32 msm_dp_read_link(struct msm_dp_panel_private *panel, u32 offset)
@@ -288,6 +319,11 @@ static int msm_dp_panel_read_dpcd(struct msm_dp_panel *msm_dp_panel)
 	if (link_info->num_lanes > link->max_dp_lanes)
 		link_info->num_lanes = link->max_dp_lanes;
 
+	/* Limit data lanes to the lanes the PHY routes to the connector */
+	panel->routed_lanes = msm_dp_panel_routed_lanes(panel);
+	if (panel->routed_lanes > 0 && link_info->num_lanes > panel->routed_lanes)
+		link_info->num_lanes = panel->routed_lanes;
+
 	/* Limit data lanes from LTTPR capabilities, if any */
 	if (max_lttpr_lanes && max_lttpr_lanes < link_info->num_lanes)
 		link_info->num_lanes = max_lttpr_lanes;
@@ -355,6 +391,14 @@ int msm_dp_panel_read_link_caps(struct msm_dp_panel *msm_dp_panel,
 				msm_dp_panel->link_info.num_lanes);
 		return -EINVAL;
 	}
+
+	drm_info(connector->dev,
+		 "[CONNECTOR:%d:%s] sink %u lanes @ %u kHz, PHY %d lanes, DT %u lanes @ %u kHz: link up to %u lanes @ %u kHz\n",
+		 connector->base.id, connector->name,
+		 drm_dp_max_lane_count(msm_dp_panel->dpcd),
+		 drm_dp_max_link_rate(msm_dp_panel->dpcd), panel->routed_lanes,
+		 panel->link->max_dp_lanes, panel->link->max_dp_link_rate,
+		 msm_dp_panel->link_info.num_lanes, msm_dp_panel->link_info.rate);
 
 	if (drm_dp_is_branch(msm_dp_panel->dpcd)) {
 		count = drm_dp_read_sink_count(panel->aux);
@@ -794,7 +838,7 @@ int msm_dp_panel_init_panel_info(struct msm_dp_panel *msm_dp_panel,
 }
 
 struct msm_dp_panel *msm_dp_panel_get(struct device *dev, struct drm_dp_aux *aux,
-			      struct msm_dp_link *link,
+			      struct msm_dp_link *link, struct phy *phy,
 			      void __iomem *link_base,
 			      void __iomem *mst2link_base,
 			      void __iomem *mst3link_base,
@@ -815,6 +859,7 @@ struct msm_dp_panel *msm_dp_panel_get(struct device *dev, struct drm_dp_aux *aux
 	panel->dev = dev;
 	panel->aux = aux;
 	panel->link = link;
+	panel->phy = phy;
 	panel->link_base = link_base;
 	panel->pixel_base = pixel_base;
 	panel->mst2link_base = mst2link_base;

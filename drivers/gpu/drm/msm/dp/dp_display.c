@@ -425,8 +425,20 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
 			dp->link->sink_count);
 
 	guard(mutex)(&dp->plugged_lock);
-	if (dp->plugged)
-		return 0;
+	if (dp->plugged) {
+		/*
+		 * The USB-C mux can change the lanes routed to DisplayPort
+		 * without an unplug, e.g. when the sink gives up USB3. Read
+		 * the link capabilities again, so that the modes userspace
+		 * probes next fit the new lane count.
+		 */
+		if (!msm_dp_panel_routed_lanes_changed(dp->panel))
+			return 0;
+
+		msm_dp_display_host_phy_init(dp);
+
+		return msm_dp_display_process_hpd_high(dp);
+	}
 
 	ret = pm_runtime_resume_and_get(&pdev->dev);
 	if (ret) {
@@ -596,7 +608,7 @@ static int msm_dp_init_sub_modules(struct msm_dp_display_private *dp)
 		goto error_link;
 	}
 
-	dp->panel = msm_dp_panel_get(dev, dp->aux, dp->link, dp->link_base,
+	dp->panel = msm_dp_panel_get(dev, dp->aux, dp->link, phy, dp->link_base,
 				     dp->mst2link_base, dp->mst3link_base, dp->pixel_base[0]);
 	if (IS_ERR(dp->panel)) {
 		rc = PTR_ERR(dp->panel);
