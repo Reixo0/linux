@@ -1311,11 +1311,14 @@ config TOUCHSCREEN_SX8654
 	  module will be called sx8654.
 
 config TOUCHSCREEN_SYNAPTICS_TCM_I2C
-	tristate "Synaptics TouchComm I2C touchscreen"
-	depends on I2C
+	tristate "Synaptics TouchComm I2C/SPI touchscreen"
+	depends on I2C || SPI_MASTER
+	depends on I2C || I2C=n
+	depends on SPI_MASTER || SPI_MASTER=n
 	help
 	  Say Y here if you have a Synaptics TouchComm (TCM) touch controller
-	  attached over I2C, such as the S3908 found in the OnePlus 9RT.
+	  attached over I2C, such as the S3908 found in the OnePlus 9RT, or over
+	  SPI, such as the one in the Nubia RedMagic 11 Pro.
 
 	  Only controllers that boot into application mode out of their own
 	  flash are supported; there is no host firmware download.
