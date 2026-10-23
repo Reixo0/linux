@@ -111,7 +111,7 @@
 	gpio-keys {
 		compatible = "gpio-keys";
 
-		pinctrl-0 = <&key_vol_up_default>;
+		pinctrl-0 = <&key_vol_up_default>, <&game_switch_default>;
 		pinctrl-names = "default";
 
 		key-volume-up {
@@ -121,6 +121,19 @@
 			debounce-interval = <15>;
 			linux,can-disable;
 			wakeup-source;
+		};
+
+		/*
+		 * Game mode slider. Downstream reads GPIO 97 (and its complement
+		 * on GPIO 174) and reports it as SW_PEN_INSERTED for lack of a
+		 * better code; kept the same for now.
+		 */
+		switch-game-mode {
+			label = "Game Mode Switch";
+			linux,input-type = <EV_SW>;
+			linux,code = <SW_PEN_INSERTED>;
+			gpios = <&tlmm 97 GPIO_ACTIVE_HIGH>;
+			debounce-interval = <30>;
 		};
 	};
 
@@ -904,6 +917,13 @@
 		function = "gpio";
 		drive-strength = <2>;
 		bias-pull-down;
+	};
+
+	game_switch_default: game-switch-default-state {
+		pins = "gpio97";
+		function = "gpio";
+		output-disable;
+		bias-disable;
 	};
 
 	key_vol_up_default: key-vol-up-default-state {
