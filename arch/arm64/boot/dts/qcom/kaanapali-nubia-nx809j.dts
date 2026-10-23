@@ -786,11 +786,58 @@
 };
 
 &gpu {
-	/* TODO: enable once the zap shader is installed in the rootfs */
+	/*
+	 * Enabled by default in kaanapali.dtsi. Keep it off until the GPU
+	 * clocks and zap shader are sorted out: MSM DRM binds the GPU as part
+	 * of the display, so a failing GPU takes the display down with it.
+	 */
+	status = "disabled";
 };
 
 &gpu_zap_shader {
 	firmware-name = "qcom/kaanapali/nubia/nx809j/gen80200_zap.mbn";
+};
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi0 {
+	vdda-supply = <&vreg_l1d_1p2>;
+
+	status = "okay";
+
+	panel@0 {
+		compatible = "nubia,nx809j-rm692h5", "raydium,rm692h5";
+		reg = <0>;
+
+		pinctrl-0 = <&disp_reset_active &mdp_vsync_active>;
+		pinctrl-1 = <&disp_reset_suspend &mdp_vsync_suspend>;
+		pinctrl-names = "default", "sleep";
+
+		vddio-supply = <&vreg_l12b_1p8>;
+		vdd-supply = <&vreg_l11b_1p0>;
+		vci-supply = <&vreg_l13b_3p0>;
+
+		reset-gpios = <&tlmm 98 GPIO_ACTIVE_LOW>;
+
+		port {
+			panel0_in: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+	};
+};
+
+&mdss_dsi0_out {
+	remote-endpoint = <&panel0_in>;
+	data-lanes = <0 1 2 3>;
+};
+
+&mdss_dsi0_phy {
+	vdds-supply = <&vreg_l3d_0p8>;
+
+	status = "okay";
 };
 
 &pmih0108_e1_eusb2_repeater {
@@ -828,11 +875,39 @@
 			       <119 2>, /* SoCCP */
 			       <144 4>; /* CXM UART */
 
+	disp_reset_active: disp-reset-active-state {
+		pins = "gpio98";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	disp_reset_suspend: disp-reset-suspend-state {
+		pins = "gpio98";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
 	key_vol_up_default: key-vol-up-default-state {
 		pins = "gpio101";
 		function = "gpio";
 		output-disable;
 		bias-pull-up;
+	};
+
+	mdp_vsync_active: mdp-vsync-active-state {
+		pins = "gpio86";
+		function = "mdp_vsync";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	mdp_vsync_suspend: mdp-vsync-suspend-state {
+		pins = "gpio86";
+		function = "mdp_vsync";
+		drive-strength = <2>;
+		bias-pull-down;
 	};
 };
 
