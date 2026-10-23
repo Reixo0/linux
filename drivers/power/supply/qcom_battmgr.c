@@ -1588,8 +1588,13 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 		battmgr->error = 0;
 		break;
 	default:
-		dev_warn(battmgr->dev, "unknown message %#x\n", opcode);
-		break;
+		/*
+		 * Newer firmware (e.g. Kaanapali) sends unsolicited messages,
+		 * such as 0x101, every few seconds. They aren't a reply to a
+		 * request, so they must not complete a pending one.
+		 */
+		dev_warn_once(battmgr->dev, "unknown message %#x\n", opcode);
+		return;
 	}
 
 out_complete:
