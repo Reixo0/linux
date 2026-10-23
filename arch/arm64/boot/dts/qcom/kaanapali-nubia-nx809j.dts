@@ -799,12 +799,7 @@
 };
 
 &gpu {
-	/*
-	 * Enabled by default in kaanapali.dtsi. Keep it off until the GPU
-	 * clocks and zap shader are sorted out: MSM DRM binds the GPU as part
-	 * of the display, so a failing GPU takes the display down with it.
-	 */
-	status = "disabled";
+	status = "okay";
 };
 
 &gpu_zap_shader {
