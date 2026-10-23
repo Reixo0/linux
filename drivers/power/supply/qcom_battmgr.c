@@ -1685,6 +1685,15 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
 	else
 		battmgr->variant = QCOM_BATTMGR_SM8350;
 
+	/*
+	 * Only the SC8280XP-style battery info message carries the unit. The
+	 * SM8350-style protocol reports capacities in uAh (like charge_counter),
+	 * so without this charge_full and charge_full_design return -ENODATA.
+	 */
+	if (battmgr->variant != QCOM_BATTMGR_SC8280XP &&
+	    battmgr->variant != QCOM_BATTMGR_X1E80100)
+		battmgr->unit = QCOM_BATTMGR_UNIT_mAh;
+
 	ret = qcom_battmgr_charge_control_thresholds_init(battmgr);
 	if (ret < 0)
 		return dev_err_probe(dev, ret,
