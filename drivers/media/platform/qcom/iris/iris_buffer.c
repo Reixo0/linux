@@ -916,7 +916,13 @@ int iris_vb2_buffer_done(struct iris_inst *inst, struct iris_buffer *buf)
 	}
 
 	if (vbuf->flags & V4L2_BUF_FLAG_LAST) {
-		if (!v4l2_m2m_has_stopped(m2m_ctx)) {
+		/*
+		 * V4L2_EVENT_EOS marks the end of a drain only. The LAST buffer
+		 * that closes a source change (PSC_LAST, e.g. after every seek)
+		 * must not signal end of stream.
+		 */
+		if (inst->sub_state & IRIS_INST_SUB_DRAIN &&
+		    !v4l2_m2m_has_stopped(m2m_ctx)) {
 			const struct v4l2_event ev = { .type = V4L2_EVENT_EOS };
 
 			v4l2_event_queue_fh(&inst->fh, &ev);

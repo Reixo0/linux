@@ -505,6 +505,8 @@ int iris_vdec_start_cmd(struct iris_inst *inst)
 	} else if (inst->sub_state & IRIS_INST_SUB_DRAIN &&
 		   inst->sub_state & IRIS_INST_SUB_DRAIN_LAST) {
 		vb2_clear_last_buffer_dequeued(dst_vq);
+		/* decoding restarts: the next drain signals EOS again */
+		v4l2_m2m_clear_state(inst->m2m_ctx);
 		clear_sub_state = IRIS_INST_SUB_DRAIN | IRIS_INST_SUB_DRAIN_LAST;
 		if (inst->sub_state & IRIS_INST_SUB_INPUT_PAUSE) {
 			if (hfi_ops->session_resume_drain) {
