@@ -868,6 +868,23 @@
 			"qcom/kaanapali/nubia/nx809j/soccp_dtb.mbn";
 };
 
+&spi19 {
+	status = "okay";
+
+	/* Synaptics TouchComm controller; wiring from the downstream DT */
+	touchscreen@0 {
+		compatible = "syna,tcm-spi";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+
+		interrupts-extended = <&tlmm 158 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 66 GPIO_ACTIVE_LOW>;
+
+		vdd-supply = <&vreg_l4b_1p8>;
+		avdd-supply = <&vreg_l14b_3p2>;
+	};
+};
+
 &tlmm {
 	/* From qcom,gpios-reserved in the downstream DT */
 	gpio-reserved-ranges = <40 4>, /* NFC eSE SPI */
