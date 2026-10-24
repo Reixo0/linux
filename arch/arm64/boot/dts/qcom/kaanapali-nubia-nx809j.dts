@@ -1110,15 +1110,11 @@
 };
 
 &uart18 {
-	/* Brahma BT needs the multi-subsystem (PERI/TME-L) setup first */
-	status = "disabled";
+	status = "okay";
 
-	/*
-	 * Bluetooth half of the peach combo (WCN7880, "Ganges"). It uses the
-	 * WCN7850 setup, with the Ganges firmware from the vendor partition.
-	 */
+	/* Bluetooth half of the peach combo: a WCN7860-style Brahma controller */
 	bluetooth {
-		compatible = "qcom,wcn7850-bt";
+		compatible = "qcom,wcn7860-bt";
 
 		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
 		vddaon-supply = <&vreg_pmu_aon_0p59>;
@@ -1128,10 +1124,10 @@
 		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
 		vddrfa1p8-supply = <&vreg_pmu_rfa_1p8>;
 
-		firmware-name = "gngbtnv20", "gngbtfw20.tlv";
 		max-speed = <3200000>;
 	};
 };
+
 
 &ufs_mem_hc {
 	reset-gpios = <&tlmm 217 GPIO_ACTIVE_LOW>;
