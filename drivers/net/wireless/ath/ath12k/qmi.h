@@ -30,6 +30,7 @@
 #define QMI_WLFW_REQUEST_MEM_IND_V01		0x0035
 #define QMI_WLFW_FW_MEM_READY_IND_V01		0x0037
 #define QMI_WLFW_FW_READY_IND_V01		0x0038
+#define QMI_WLFW_COLD_BOOT_CAL_DONE_IND_V01	0x003E
 
 #define QMI_WLANFW_MAX_DATA_SIZE_V01		6144
 
@@ -65,6 +66,7 @@ enum ath12k_qmi_event_type {
 	ATH12K_QMI_EVENT_POWER_UP,
 	ATH12K_QMI_EVENT_POWER_DOWN,
 	ATH12K_QMI_EVENT_HOST_CAP,
+	ATH12K_QMI_EVENT_COLD_BOOT_CAL_DONE,
 	ATH12K_QMI_EVENT_MAX,
 };
 
@@ -200,6 +202,7 @@ struct wlfw_host_mlo_chip_info_s_v01 {
 
 enum ath12k_qmi_cnss_feature {
 	CNSS_FEATURE_MIN_ENUM_VAL_V01 = INT_MIN,
+	CNSS_WLAN_EN_SUPPORT_V01 = 2,
 	CNSS_QDSS_CFG_MISS_V01 = 3,
 	CNSS_PCIE_PERST_NO_PULL_V01 = 4,
 	CNSS_AUX_UC_SUPPORT_V01 = 6,
@@ -378,6 +381,10 @@ struct qmi_wlanfw_fw_ready_ind_msg_v01 {
 	char placeholder;
 };
 
+struct qmi_wlanfw_cold_boot_cal_done_ind_msg_v01 {
+	char placeholder;
+};
+
 #define QMI_WLANFW_CAP_REQ_MSG_V01_MAX_LEN	0
 #define QMI_WLANFW_CAP_REQ_V01			0x0024
 
@@ -533,6 +540,26 @@ struct qmi_wlanfw_m3_info_resp_msg_v01 {
 #define QMI_WLANFW_AUX_UC_INFO_REQ_MSG_V01_MAX_MSG_LEN	18
 #define QMI_WLANFW_AUX_UC_INFO_REQ_V01	0x005A
 
+#define QMI_WLANFW_QDSS_TRACE_CONFIG_DOWNLOAD_REQ_V01		0x0044
+#define QMI_WLANFW_QDSS_TRACE_CONFIG_DOWNLOAD_REQ_MSG_V01_MAX_LEN	6167
+#define ATH12K_QDSS_TRACE_CONFIG_FILE		"qdss_trace_config.cfg"
+
+struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01 {
+	u8 total_size_valid;
+	u32 total_size;
+	u8 seg_id_valid;
+	u32 seg_id;
+	u8 data_valid;
+	u32 data_len;
+	u8 data[QMI_WLANFW_MAX_DATA_SIZE_V01];
+	u8 end_valid;
+	u8 end;
+};
+
+struct qmi_wlanfw_qdss_trace_config_download_resp_msg_v01 {
+	struct qmi_response_type_v01 resp;
+};
+
 struct qmi_wlanfw_aux_uc_info_req_msg_v01 {
 	u64 addr;
 	u32 size;
@@ -614,6 +641,9 @@ enum ath12k_qmi_firmware_mode {
 
 	/* firmware offline; values 2-3 reserved by firmware ABI */
 	ATH12K_QMI_FIRMWARE_MODE_OFF = 4,
+
+	/* cold boot calibration; values 5-6 reserved by firmware ABI */
+	ATH12K_QMI_FIRMWARE_MODE_COLD_BOOT = 7,
 };
 
 static inline void ath12k_qmi_set_event_block(struct ath12k_qmi *qmi, bool block)

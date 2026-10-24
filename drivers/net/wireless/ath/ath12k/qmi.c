@@ -2058,6 +2058,122 @@ static const struct qmi_elem_info qmi_wlanfw_fw_ready_ind_msg_v01_ei[] = {
 	},
 };
 
+static const struct qmi_elem_info qmi_wlanfw_qdss_trace_config_download_req_msg_v01_ei[] = {
+	{
+		.data_type	= QMI_OPT_FLAG,
+		.elem_len	= 1,
+		.elem_size	= sizeof(u8),
+		.array_type	= NO_ARRAY,
+		.tlv_type	= 0x10,
+		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
+					   total_size_valid),
+	},
+	{
+		.data_type	= QMI_UNSIGNED_4_BYTE,
+		.elem_len	= 1,
+		.elem_size	= sizeof(u32),
+		.array_type	= NO_ARRAY,
+		.tlv_type	= 0x10,
+		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
+					   total_size),
+	},
+	{
+		.data_type	= QMI_OPT_FLAG,
+		.elem_len	= 1,
+		.elem_size	= sizeof(u8),
+		.array_type	= NO_ARRAY,
+		.tlv_type	= 0x11,
+		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
+					   seg_id_valid),
+	},
+	{
+		.data_type	= QMI_UNSIGNED_4_BYTE,
+		.elem_len	= 1,
+		.elem_size	= sizeof(u32),
+		.array_type	= NO_ARRAY,
+		.tlv_type	= 0x11,
+		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
+					   seg_id),
+	},
+	{
+		.data_type	= QMI_OPT_FLAG,
+		.elem_len	= 1,
+		.elem_size	= sizeof(u8),
+		.array_type	= NO_ARRAY,
+		.tlv_type	= 0x12,
+		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
+					   data_valid),
+	},
+	{
+		.data_type	= QMI_DATA_LEN,
+		.elem_len	= 1,
+		.elem_size	= sizeof(u16),
+		.array_type	= NO_ARRAY,
+		.tlv_type	= 0x12,
+		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
+					   data_len),
+	},
+	{
+		.data_type	= QMI_UNSIGNED_1_BYTE,
+		.elem_len	= QMI_WLANFW_MAX_DATA_SIZE_V01,
+		.elem_size	= sizeof(u8),
+		.array_type	= VAR_LEN_ARRAY,
+		.tlv_type	= 0x12,
+		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
+					   data),
+	},
+	{
+		.data_type	= QMI_OPT_FLAG,
+		.elem_len	= 1,
+		.elem_size	= sizeof(u8),
+		.array_type	= NO_ARRAY,
+		.tlv_type	= 0x13,
+		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
+					   end_valid),
+	},
+	{
+		.data_type	= QMI_UNSIGNED_1_BYTE,
+		.elem_len	= 1,
+		.elem_size	= sizeof(u8),
+		.array_type	= NO_ARRAY,
+		.tlv_type	= 0x13,
+		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
+					   end),
+	},
+	{
+		.data_type	= QMI_EOTI,
+		.array_type	= NO_ARRAY,
+		.tlv_type	= QMI_COMMON_TLV_TYPE,
+	},
+};
+
+static const struct qmi_elem_info qmi_wlanfw_qdss_trace_config_download_resp_msg_v01_ei[] = {
+	{
+		.data_type	= QMI_STRUCT,
+		.elem_len	= 1,
+		.elem_size	= sizeof(struct qmi_response_type_v01),
+		.array_type	= NO_ARRAY,
+		.tlv_type	= 0x02,
+		.offset		=
+			offsetof(struct qmi_wlanfw_qdss_trace_config_download_resp_msg_v01,
+				 resp),
+		.ei_array	= qmi_response_type_v01_ei,
+	},
+	{
+		.data_type	= QMI_EOTI,
+		.array_type	= NO_ARRAY,
+		.tlv_type	= QMI_COMMON_TLV_TYPE,
+	},
+};
+
+static const struct qmi_elem_info qmi_wlanfw_cold_boot_cal_done_ind_msg_v01_ei[] = {
+	{
+		.data_type	= QMI_EOTI,
+		.array_type	= NO_ARRAY,
+		.tlv_type	= QMI_COMMON_TLV_TYPE,
+	},
+};
+
 static const struct qmi_elem_info qmi_wlanfw_wlan_ini_req_msg_v01_ei[] = {
 	{
 		.data_type	= QMI_OPT_FLAG,
@@ -3482,6 +3598,86 @@ out:
 	return ret;
 }
 
+/* Firmware that is not told CNSS_QDSS_CFG_MISS waits for this file and only
+ * then completes its init; it is a plain text trace configuration.
+ */
+static int ath12k_qmi_qdss_trace_config_send(struct ath12k_base *ab)
+{
+	struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01 *req;
+	struct qmi_wlanfw_qdss_trace_config_download_resp_msg_v01 resp;
+	const struct firmware *fw;
+	const u8 *data;
+	u32 remaining;
+	struct qmi_txn txn;
+	int ret = 0;
+
+	fw = ath12k_core_firmware_request(ab, ATH12K_QDSS_TRACE_CONFIG_FILE);
+	if (IS_ERR(fw)) {
+		ath12k_warn(ab, "qmi failed to load %s: %ld\n",
+			    ATH12K_QDSS_TRACE_CONFIG_FILE, PTR_ERR(fw));
+		return PTR_ERR(fw);
+	}
+
+	req = kzalloc(sizeof(*req), GFP_KERNEL);
+	if (!req) {
+		ret = -ENOMEM;
+		goto out_fw;
+	}
+
+	data = fw->data;
+	remaining = fw->size;
+	while (remaining) {
+		req->total_size_valid = 1;
+		req->total_size = fw->size;
+		req->seg_id_valid = 1;
+		req->data_valid = 1;
+		req->end_valid = 1;
+		req->data_len = min_t(u32, remaining, QMI_WLANFW_MAX_DATA_SIZE_V01);
+		req->end = req->data_len == remaining;
+		memcpy(req->data, data, req->data_len);
+
+		memset(&resp, 0, sizeof(resp));
+		ret = qmi_txn_init(&ab->qmi.handle, &txn,
+				   qmi_wlanfw_qdss_trace_config_download_resp_msg_v01_ei,
+				   &resp);
+		if (ret < 0)
+			goto out;
+
+		ret = qmi_send_request(&ab->qmi.handle, NULL, &txn,
+				       QMI_WLANFW_QDSS_TRACE_CONFIG_DOWNLOAD_REQ_V01,
+				       QMI_WLANFW_QDSS_TRACE_CONFIG_DOWNLOAD_REQ_MSG_V01_MAX_LEN,
+				       qmi_wlanfw_qdss_trace_config_download_req_msg_v01_ei,
+				       req);
+		if (ret < 0) {
+			qmi_txn_cancel(&txn);
+			goto out;
+		}
+
+		ret = qmi_txn_wait(&txn, msecs_to_jiffies(ATH12K_QMI_WLANFW_TIMEOUT_MS));
+		if (ret < 0)
+			goto out;
+
+		if (resp.resp.result != QMI_RESULT_SUCCESS_V01) {
+			ath12k_warn(ab, "qmi QDSS config download failed, result: %u, err: %u\n",
+				    resp.resp.result, resp.resp.error);
+			ret = -EINVAL;
+			goto out;
+		}
+
+		data += req->data_len;
+		remaining -= req->data_len;
+		req->seg_id++;
+	}
+
+	ath12k_dbg(ab, ATH12K_DBG_QMI, "qmi QDSS config downloaded (%zu bytes)\n",
+		   fw->size);
+out:
+	kfree(req);
+out_fw:
+	release_firmware(fw);
+	return ret;
+}
+
 static int ath12k_qmi_wlanfw_mode_send(struct ath12k_base *ab,
 				       enum ath12k_qmi_firmware_mode mode)
 {
@@ -3887,6 +4083,12 @@ int ath12k_qmi_event_load_bdf(struct ath12k_qmi *qmi)
 		}
 	}
 
+	if (!(hw_params->qmi_cnss_feature_bitmap & BIT(CNSS_QDSS_CFG_MISS_V01))) {
+		ret = ath12k_qmi_qdss_trace_config_send(ab);
+		if (ret < 0)
+			return ret;
+	}
+
 	return ret;
 }
 
@@ -3959,6 +4161,18 @@ static void ath12k_qmi_msg_fw_ready_cb(struct qmi_handle *qmi_hdl,
 	ath12k_qmi_driver_event_post(qmi, ATH12K_QMI_EVENT_FW_READY, NULL);
 }
 
+static void ath12k_qmi_msg_cold_boot_cal_done_cb(struct qmi_handle *qmi_hdl,
+						 struct sockaddr_qrtr *sq,
+						 struct qmi_txn *txn,
+						 const void *decoded)
+{
+	struct ath12k_qmi *qmi = container_of(qmi_hdl, struct ath12k_qmi, handle);
+	struct ath12k_base *ab = qmi->ab;
+
+	ath12k_dbg(ab, ATH12K_DBG_QMI, "qmi cold boot calibration done\n");
+	ath12k_qmi_driver_event_post(qmi, ATH12K_QMI_EVENT_COLD_BOOT_CAL_DONE, NULL);
+}
+
 static const struct qmi_msg_handler ath12k_qmi_msg_handlers[] = {
 	{
 		.type = QMI_INDICATION,
@@ -3980,6 +4194,14 @@ static const struct qmi_msg_handler ath12k_qmi_msg_handlers[] = {
 		.ei = qmi_wlanfw_fw_ready_ind_msg_v01_ei,
 		.decoded_size = sizeof(struct qmi_wlanfw_fw_ready_ind_msg_v01),
 		.fn = ath12k_qmi_msg_fw_ready_cb,
+	},
+	{
+		.type = QMI_INDICATION,
+		.msg_id = QMI_WLFW_COLD_BOOT_CAL_DONE_IND_V01,
+		.ei = qmi_wlanfw_cold_boot_cal_done_ind_msg_v01_ei,
+		.decoded_size =
+			sizeof(struct qmi_wlanfw_cold_boot_cal_done_ind_msg_v01),
+		.fn = ath12k_qmi_msg_cold_boot_cal_done_cb,
 	},
 
 	/* end of list */
@@ -4091,6 +4313,18 @@ static void ath12k_qmi_driver_event_work(struct work_struct *work)
 
 			clear_bit(ATH12K_FLAG_CRASH_FLUSH,
 				  &ab->dev_flags);
+
+			if (ab->hw_params->cold_boot_calib && !ab->qmi.cal_done) {
+				enum ath12k_qmi_firmware_mode mode_cal =
+					ATH12K_QMI_FIRMWARE_MODE_COLD_BOOT;
+
+				ath12k_info(ab, "starting cold boot calibration\n");
+				ret = ath12k_qmi_wlanfw_mode_send(ab, mode_cal);
+				if (ret < 0)
+					set_bit(ATH12K_FLAG_QMI_FAIL, &ab->dev_flags);
+				break;
+			}
+
 			ret = ath12k_core_qmi_firmware_ready(ab);
 			if (!ret)
 				set_bit(ATH12K_FLAG_QMI_FW_READY_COMPLETE,
@@ -4101,6 +4335,14 @@ static void ath12k_qmi_driver_event_work(struct work_struct *work)
 			ret = ath12k_qmi_event_host_cap(qmi);
 			if (ret < 0)
 				set_bit(ATH12K_FLAG_QMI_FAIL, &ab->dev_flags);
+			break;
+		case ATH12K_QMI_EVENT_COLD_BOOT_CAL_DONE:
+			if (ab->qmi.cal_done)
+				break;
+			ab->qmi.cal_done = 1;
+			ath12k_info(ab, "cold boot calibration done, restarting firmware\n");
+			ath12k_qmi_wlanfw_mode_send(ab, ATH12K_QMI_FIRMWARE_MODE_OFF);
+			queue_work(ab->workqueue, &ab->cal_restart_work);
 			break;
 		default:
 			ath12k_warn(ab, "invalid event type: %d\n", event->type);

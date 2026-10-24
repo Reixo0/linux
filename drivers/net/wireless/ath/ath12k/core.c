@@ -1713,6 +1713,21 @@ exit_restart:
 	complete(&ab->restart_completed);
 }
 
+/* Cold boot calibration is done: power cycle so the firmware boots again,
+ * this time into mission mode with the calibration data kept in CALDB.
+ */
+static void ath12k_core_cal_restart(struct work_struct *work)
+{
+	struct ath12k_base *ab = container_of(work, struct ath12k_base,
+					      cal_restart_work);
+	int ret;
+
+	ath12k_hif_power_down(ab, false);
+	ret = ath12k_hif_power_up(ab);
+	if (ret)
+		ath12k_err(ab, "failed to power up after calibration: %d\n", ret);
+}
+
 static void ath12k_core_reset(struct work_struct *work)
 {
 	struct ath12k_base *ab = container_of(work, struct ath12k_base, reset_work);
@@ -2329,6 +2344,7 @@ struct ath12k_base *ath12k_core_alloc(struct device *dev, size_t priv_size,
 	INIT_WORK(&ab->reset_work, ath12k_core_reset);
 	INIT_WORK(&ab->rfkill_work, ath12k_rfkill_work);
 	INIT_WORK(&ab->dump_work, ath12k_coredump_upload);
+	INIT_WORK(&ab->cal_restart_work, ath12k_core_cal_restart);
 	INIT_WORK(&ab->update_11d_work, ath12k_update_11d);
 
 	timer_setup(&ab->rx_replenish_retry, ath12k_ce_rx_replenish_retry, 0);

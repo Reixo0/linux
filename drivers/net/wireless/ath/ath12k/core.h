@@ -158,6 +158,7 @@ enum ath12k_hw_rev {
 	ATH12K_HW_IPQ5332_HW10,
 	ATH12K_HW_QCC2072_HW10,
 	ATH12K_HW_IPQ5424_HW10,
+	ATH12K_HW_PEACH_HW20,
 };
 
 #define ATH12K_IRQ_NUM_MAX 57
@@ -957,6 +958,7 @@ struct ath12k_base {
 	struct ath12k_dump_file_data *dump_data;
 	size_t ath12k_coredump_len;
 	struct work_struct dump_work;
+	struct work_struct cal_restart_work;
 
 	struct ath12k_htc htc;
 
