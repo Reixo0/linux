@@ -13,6 +13,7 @@
 
 extern const struct hal_ops hal_wcn7850_ops;
 extern const struct ath12k_hw_regs wcn7850_regs;
+extern const struct ath12k_hw_regs peach_regs;
 extern const struct ath12k_hal_tcl_to_wbm_rbm_map
 ath12k_hal_tcl_to_wbm_rbm_map_wcn7850[DP_TCL_NUM_RING_MAX];
 extern const struct ath12k_hw_hal_params ath12k_hw_hal_params_wcn7850;
