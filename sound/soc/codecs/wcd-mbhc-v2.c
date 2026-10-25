@@ -13,6 +13,7 @@
 #include <sound/jack.h>
 #include "wcd-mbhc-v2.h"
 
+
 #define HS_DETECT_PLUG_TIME_MS		(3 * 1000)
 #define MBHC_BUTTON_PRESS_THRESHOLD_MIN	250
 #define GND_MIC_SWAP_THRESHOLD		4
@@ -556,6 +557,9 @@ static void mbhc_plug_detect_fn(struct work_struct *work)
 		wcd_mbhc_write_field(mbhc, WCD_MBHC_BTN_ISRC_CTL, 0);
 		mbhc->extn_cable_hph_rem = false;
 
+		if (mbhc->cfg->reset_gnd_mic)
+			mbhc->cfg->reset_gnd_mic(component);
+
 		if (mbhc->current_plug == MBHC_PLUG_TYPE_NONE)
 			goto report_removed;
 
@@ -1019,6 +1023,9 @@ static int wcd_check_cross_conn(struct wcd_mbhc *mbhc)
 	    hphr_adc_res > HPHL_CROSS_CONN_THRESHOLD)
 		is_cross_conn = true;
 
+	dev_dbg(mbhc->dev, "cross connection check: HPHL %d mV, HPHR %d mV\n",
+		hphl_adc_res, hphr_adc_res);
+
 	wcd_mbhc_write_field(mbhc, WCD_MBHC_FSM_EN, 0);
 	/* Set the MUX selection to Auto */
 	wcd_mbhc_write_field(mbhc, WCD_MBHC_MUX_CTL, MUX_CTL_AUTO);
@@ -1173,6 +1180,28 @@ static bool wcd_mbhc_check_for_spl_headset(struct wcd_mbhc *mbhc)
 	return is_spl_hs;
 }
 
+/*
+ * Swap ground and mic of a jack wired through an analog switch, with the
+ * mic bias off as the downstream driver does, and let the lines settle.
+ */
+static bool wcd_mbhc_hsj_swap(struct wcd_mbhc *mbhc)
+{
+	struct snd_soc_component *component = mbhc->component;
+
+	if (!mbhc->cfg->hsj_switch || !mbhc->cfg->swap_gnd_mic ||
+	    !mbhc->mbhc_cb->mbhc_micbias_control)
+		return false;
+
+	mbhc->mbhc_cb->mbhc_micbias_control(component, MIC_BIAS_2, MICB_DISABLE);
+	usleep_range(10000, 10100);
+	mbhc->cfg->swap_gnd_mic(component);
+	mbhc->mbhc_cb->mbhc_micbias_control(component, MIC_BIAS_2, MICB_ENABLE);
+	msleep(50);
+	dev_dbg(mbhc->dev, "ground and mic swapped\n");
+
+	return true;
+}
+
 static void wcd_correct_swch_plug(struct work_struct *work)
 {
 	struct wcd_mbhc *mbhc;
@@ -1202,11 +1231,27 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	/* Mask ADC COMPLETE interrupt */
 	disable_irq_nosync(mbhc->intr_ids->mbhc_hs_ins_intr);
 
+	/*
+	 * The detect switch closes before the plug is seated: with the mic
+	 * and ground behind an analog switch, wait before measuring them.
+	 */
+	if (mbhc->cfg->hsj_switch)
+		msleep(300);
+
 	/* Check for cross connection */
 	do {
 		cross_conn = wcd_check_cross_conn(mbhc);
 		try++;
 	} while (try < mbhc->swap_thr);
+
+	/* A jack behind an analog switch: swap ground and mic, then recheck */
+	if (cross_conn > 0 && wcd_mbhc_hsj_swap(mbhc)) {
+		try = 0;
+		do {
+			cross_conn = wcd_check_cross_conn(mbhc);
+			try++;
+		} while (try < mbhc->swap_thr);
+	}
 
 	if (cross_conn > 0) {
 		plug_type = MBHC_PLUG_TYPE_GND_MIC_SWAP;
@@ -1218,6 +1263,38 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	/* Find plug type */
 	output_mv = wcd_measure_adc_continuous(mbhc);
 	plug_type = wcd_mbhc_get_plug_from_adc(mbhc, output_mv);
+
+	/*
+	 * Behind an analog switch, a headset wired the other way (OMTP vs
+	 * CTIA) looks like headphones rather than a cross connection: if no
+	 * mic shows up, try the swapped wiring before settling.
+	 */
+	if (plug_type != MBHC_PLUG_TYPE_HEADSET && wcd_mbhc_hsj_swap(mbhc)) {
+		int settle, prev_mv = -1000;
+
+		/*
+		 * The mic line charges through the bias resistor and an open
+		 * line passes through the headset range on the way: only take
+		 * a headset on two close readings.
+		 */
+		for (settle = 0; settle < 10; settle++) {
+			msleep(50);
+			output_mv = wcd_measure_adc_continuous(mbhc);
+			dev_dbg(mbhc->dev, "swapped: %d mV\n", output_mv);
+			if (wcd_mbhc_get_plug_from_adc(mbhc, output_mv) == MBHC_PLUG_TYPE_HEADSET &&
+			    abs(output_mv - prev_mv) < 100)
+				break;
+			prev_mv = output_mv;
+		}
+
+		if (settle < 10) {
+			plug_type = MBHC_PLUG_TYPE_HEADSET;
+		} else {
+			wcd_mbhc_hsj_swap(mbhc);
+			output_mv = wcd_measure_adc_continuous(mbhc);
+			plug_type = wcd_mbhc_get_plug_from_adc(mbhc, output_mv);
+		}
+	}
 
 	/*
 	 * Report plug type if it is either headset or headphone
@@ -1285,7 +1362,11 @@ correct_plug_type:
 			} else /* Error if (cross_conn < 0) */
 				continue;
 
-			if (pt_gnd_mic_swap_cnt == mbhc->swap_thr) {
+			/*
+			 * A jack behind an analog switch has its wiring picked
+			 * before this loop; a transient must not flip it back.
+			 */
+			if (pt_gnd_mic_swap_cnt == mbhc->swap_thr && !mbhc->cfg->hsj_switch) {
 				/* US_EU gpio present, flip switch */
 				if (mbhc->cfg->swap_gnd_mic) {
 					if (mbhc->cfg->swap_gnd_mic(component))
@@ -1458,6 +1539,7 @@ int wcd_mbhc_get_hph_type(struct wcd_mbhc *mbhc)
 	return mbhc->hph_type;
 }
 EXPORT_SYMBOL(wcd_mbhc_get_hph_type);
+
 
 int wcd_mbhc_start(struct wcd_mbhc *mbhc, struct wcd_mbhc_config *cfg,
 		   struct snd_soc_jack *jack)

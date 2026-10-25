@@ -195,6 +195,10 @@ struct wcd_mbhc_config {
 	bool mono_stero_detection;
 	bool typec_analog_mux;
 	bool (*swap_gnd_mic)(struct snd_soc_component *component);
+	/* jack mic and ground wired through an analog switch (swap_gnd_mic) */
+	bool hsj_switch;
+	/* undo a ground/mic swap when the plug is removed */
+	void (*reset_gnd_mic)(struct snd_soc_component *component);
 	bool hs_ext_micbias;
 	bool gnd_det_en;
 	uint32_t linein_th;
