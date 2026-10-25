@@ -547,7 +547,13 @@ static void wcd_clsh_v3_state_hph_r(struct wcd_clsh_ctrl *ctrl, int req_state,
 	if (is_enable) {
 		wcd_clsh_v3_set_buck_regulator_mode(component, mode);
 		wcd_clsh_v3_set_flyback_mode(component, mode);
-		wcd_clsh_v3_force_iq_ctl(component, mode, true);
+		/*
+		 * Force IQ only while the flyback and buck are off: turning
+		 * them on releases it, which happens for the first channel
+		 * only, and a second channel would leave it forced.
+		 */
+		if (!ctrl->flyback_users)
+			wcd_clsh_v3_force_iq_ctl(component, mode, true);
 		wcd_clsh_v3_flyback_ctrl(component, ctrl, mode, true);
 		wcd_clsh_v3_set_flyback_current(component, mode);
 		wcd_clsh_v3_set_buck_mode(component, mode);
@@ -637,7 +643,13 @@ static void wcd_clsh_v3_state_hph_l(struct wcd_clsh_ctrl *ctrl, int req_state,
 	if (is_enable) {
 		wcd_clsh_v3_set_buck_regulator_mode(component, mode);
 		wcd_clsh_v3_set_flyback_mode(component, mode);
-		wcd_clsh_v3_force_iq_ctl(component, mode, true);
+		/*
+		 * Force IQ only while the flyback and buck are off: turning
+		 * them on releases it, which happens for the first channel
+		 * only, and a second channel would leave it forced.
+		 */
+		if (!ctrl->flyback_users)
+			wcd_clsh_v3_force_iq_ctl(component, mode, true);
 		wcd_clsh_v3_flyback_ctrl(component, ctrl, mode, true);
 		wcd_clsh_v3_set_flyback_current(component, mode);
 		wcd_clsh_v3_set_buck_mode(component, mode);
@@ -721,7 +733,13 @@ static void wcd_clsh_v3_state_ear(struct wcd_clsh_ctrl *ctrl, int req_state,
 	if (is_enable) {
 		wcd_clsh_v3_set_buck_regulator_mode(component, mode);
 		wcd_clsh_v3_set_flyback_mode(component, mode);
-		wcd_clsh_v3_force_iq_ctl(component, mode, true);
+		/*
+		 * Force IQ only while the flyback and buck are off: turning
+		 * them on releases it, which happens for the first channel
+		 * only, and a second channel would leave it forced.
+		 */
+		if (!ctrl->flyback_users)
+			wcd_clsh_v3_force_iq_ctl(component, mode, true);
 		wcd_clsh_v3_flyback_ctrl(component, ctrl, mode, true);
 		wcd_clsh_v3_set_flyback_current(component, mode);
 		wcd_clsh_v3_set_buck_mode(component, mode);
