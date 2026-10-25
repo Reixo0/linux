@@ -2036,11 +2036,14 @@ static const struct soc_enum rdac3_enum =
 static const struct snd_kcontrol_new rx_rdac3_mux =
 	SOC_DAPM_ENUM("RDAC3_MUX Mux", rdac3_enum);
 
-/* In HPH PCM mode the HPH stream rides the HIFI_PCM port */
+/*
+ * In HPH PCM mode the HPH stream rides the HIFI_PCM port. Only the RX device
+ * has HPH channels: the TX channel ids overlap them (ADC1/2 == HPH_L/R).
+ */
 static unsigned int wcd939x_hph_pcm_ch(struct wcd939x_priv *wcd939x,
-				       unsigned int ch_id)
+				       unsigned int aif, unsigned int ch_id)
 {
-	if (wcd939x->hph_pcm_enabled) {
+	if (aif == AIF1_PB && wcd939x->hph_pcm_enabled) {
 		if (ch_id == WCD939X_HPH_L)
 			return WCD939X_HIFI_PCM_L;
 		if (ch_id == WCD939X_HPH_R)
@@ -2057,7 +2060,7 @@ static int wcd939x_get_swr_port(struct snd_kcontrol *kcontrol,
 	struct snd_soc_component *comp = snd_kcontrol_chip(kcontrol);
 	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(comp);
 	struct wcd939x_sdw_priv *wcd = wcd939x->sdw_priv[mixer->shift];
-	unsigned int ch_id = wcd939x_hph_pcm_ch(wcd939x, mixer->reg);
+	unsigned int ch_id = wcd939x_hph_pcm_ch(wcd939x, mixer->shift, mixer->reg);
 	unsigned int portidx = wcd->ch_info[ch_id].port_num;
 	u8 ch_mask = wcd->ch_info[ch_id].ch_mask;
 
@@ -2086,7 +2089,7 @@ static int wcd939x_set_swr_port(struct snd_kcontrol *kcontrol,
 	struct snd_soc_component *comp = snd_kcontrol_chip(kcontrol);
 	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(comp);
 	struct wcd939x_sdw_priv *wcd = wcd939x->sdw_priv[mixer->shift];
-	unsigned int ch_id = wcd939x_hph_pcm_ch(wcd939x, mixer->reg);
+	unsigned int ch_id = wcd939x_hph_pcm_ch(wcd939x, mixer->shift, mixer->reg);
 	unsigned int portidx = wcd->ch_info[ch_id].port_num;
 	u8 ch_mask = wcd->ch_info[ch_id].ch_mask;
 	bool enable = !!ucontrol->value.integer.value[0];
