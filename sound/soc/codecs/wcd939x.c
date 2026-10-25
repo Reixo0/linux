@@ -582,10 +582,11 @@ static void wcd939x_hph_pcm_pre_dac(struct snd_soc_component *component,
 		snd_soc_component_write_field(component, WCD939X_DIGITAL_CDC_COMP_CTL_0,
 					      WCD939X_CDC_COMP_CTL_0_HPHL_COMP_EN, true);
 
-	/* crosstalk coefficients (stock: scale 0x1f, sec2/3 0x11/0x4f) */
-	snd_soc_component_write(component, sec_base + 0, 0x1f);
-	snd_soc_component_write(component, sec_base + 3, 0x4f);
-	snd_soc_component_write(component, sec_base + 2, 0x11);
+	/*
+	 * No crosstalk cancellation: the stock driver leaves the HPHL/HPHR
+	 * PATH_SEC coefficients at 0 on Kaanapali.
+	 */
+	(void)sec_base;
 }
 
 static void wcd939x_hph_pcm_post_dac(struct snd_soc_component *component)
@@ -630,8 +631,11 @@ static void wcd939x_hph_pcm_pre_pa(struct snd_soc_component *component,
 	u16 cfg0 = hphr ? WCD939X_RX_TOP_HPHR_PATH_CFG0 : WCD939X_RX_TOP_HPHL_PATH_CFG0;
 	u16 cfg1 = hphr ? WCD939X_RX_TOP_HPHR_PATH_CFG1 : WCD939X_RX_TOP_HPHL_PATH_CFG1;
 
-	/* crosstalk enable for L and R */
-	snd_soc_component_write(component, WCD939X_RX_TOP_PATH_CFG2, 0x0f);
+	/* PA gain as programmed by the stock driver (0x09, 0x89) */
+	if (hphr)
+		snd_soc_component_write(component, WCD939X_HPH_NEW_INT_PA_GAIN_CTL_R, 0x89);
+	else
+		snd_soc_component_write(component, WCD939X_HPH_NEW_INT_PA_GAIN_CTL_L, 0x09);
 	/* DC droop coefficient for 9.6 MHz RX clock */
 	snd_soc_component_write(component, cfg1, 0x03);
 	/* delay zero-notch enable, then interpolator enable (stock order) */
