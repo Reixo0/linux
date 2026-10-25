@@ -1116,6 +1116,13 @@
 		bias-pull-down;
 	};
 
+	usb_dp_qmpphy_portselect: usb-dp-qmpphy-portselect-state {
+		pins = "gpio60";
+		function = "usb_phy";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
 	wlan_en: wlan-en-state {
 		pins = "gpio16";
 		function = "gpio";
@@ -1168,11 +1175,12 @@
 
 &usb {
 	/*
-	 * The role normally comes from pmic-glink, which needs the ADSP.
-	 * Until that runs, force device mode for the USB network shell.
+	 * The data role comes from pmic-glink (UCSI) on the SoCCP. Start as a
+	 * device, so the USB network shell is up before the role is known.
 	 */
-	dr_mode = "peripheral";
-	/delete-property/ usb-role-switch;
+	dr_mode = "otg";
+	usb-role-switch;
+	role-switch-default-mode = "peripheral";
 
 	status = "okay";
 };
@@ -1189,6 +1197,10 @@
 &usb_dp_qmpphy {
 	vdda-phy-supply = <&vreg_l4f_0p8>;
 	vdda-pll-supply = <&vreg_l1d_1p2>;
+
+	/* Port select pin, routed to the PHY as on the stock firmware */
+	pinctrl-0 = <&usb_dp_qmpphy_portselect>;
+	pinctrl-names = "default";
 
 	status = "okay";
 };
