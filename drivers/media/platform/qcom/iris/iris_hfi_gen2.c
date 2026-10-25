@@ -1106,6 +1106,24 @@ static const struct platform_inst_fw_cap inst_fw_cap_sm8550_dec[] = {
 		.flags = CAP_FLAG_INPUT_PORT,
 		.set = iris_set_u32,
 	},
+	{
+		.cap_id = DISPLAY_DELAY_ENABLE,
+		.min = 0,
+		.max = 1,
+		.step_or_mask = 1,
+		.value = 0,
+		.hfi_id = HFI_PROP_DECODE_ORDER_OUTPUT,
+		.flags = CAP_FLAG_INPUT_PORT,
+		.set = iris_set_decode_order,
+	},
+	{
+		.cap_id = DISPLAY_DELAY,
+		.min = 0,
+		.max = 16383,
+		.step_or_mask = 1,
+		.value = 0,
+		.flags = CAP_FLAG_INPUT_PORT,
+	},
 };
 
 static const struct platform_inst_fw_cap inst_fw_cap_sm8550_enc[] = {

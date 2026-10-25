@@ -15,6 +15,17 @@
 #define CABAC_MAX_BITRATE 160000000
 #define CAVLC_MAX_BITRATE 220000000
 
+/*
+ * Decode-order output (V4L2_CID_MPEG_VIDEO_DEC_DISPLAY_DELAY_ENABLE = 1 with
+ * V4L2_CID_MPEG_VIDEO_DEC_DISPLAY_DELAY = 0) is not validated on every
+ * firmware yet, so the two controls are only offered when this parameter is
+ * set. It is read when an instance is opened.
+ */
+static bool decode_order_output;
+module_param(decode_order_output, bool, 0644);
+MODULE_PARM_DESC(decode_order_output,
+		 "Offer decoder display-delay controls (decode-order output) on HFI gen2 (default: N)");
+
 static inline bool iris_valid_cap_id(enum platform_inst_fw_cap_type cap_id)
 {
 	return cap_id >= 1 && cap_id < INST_FW_CAP_MAX;
@@ -163,6 +174,10 @@ static enum platform_inst_fw_cap_type iris_get_cap_id(u32 id)
 		return SLICE_MAX_BYTES;
 	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_MB:
 		return SLICE_MAX_MB;
+	case V4L2_CID_MPEG_VIDEO_DEC_DISPLAY_DELAY_ENABLE:
+		return DISPLAY_DELAY_ENABLE;
+	case V4L2_CID_MPEG_VIDEO_DEC_DISPLAY_DELAY:
+		return DISPLAY_DELAY;
 	default:
 		return INST_FW_CAP_MAX;
 	}
@@ -314,9 +329,21 @@ static u32 iris_get_v4l2_id(enum platform_inst_fw_cap_type cap_id)
 		return V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_BYTES;
 	case SLICE_MAX_MB:
 		return V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_MB;
+	case DISPLAY_DELAY_ENABLE:
+		return V4L2_CID_MPEG_VIDEO_DEC_DISPLAY_DELAY_ENABLE;
+	case DISPLAY_DELAY:
+		return V4L2_CID_MPEG_VIDEO_DEC_DISPLAY_DELAY;
 	default:
 		return 0;
 	}
+}
+
+static bool iris_ctrl_offered(enum platform_inst_fw_cap_type cap_id)
+{
+	if (cap_id == DISPLAY_DELAY_ENABLE || cap_id == DISPLAY_DELAY)
+		return decode_order_output;
+
+	return true;
 }
 
 static int iris_op_s_ctrl(struct v4l2_ctrl *ctrl)
@@ -360,7 +387,8 @@ int iris_ctrls_init(struct iris_inst *inst)
 	int ret;
 
 	for (idx = 1; idx < INST_FW_CAP_MAX; idx++) {
-		if (iris_get_v4l2_id(cap[idx].cap_id))
+		if (iris_get_v4l2_id(cap[idx].cap_id) &&
+		    iris_ctrl_offered(cap[idx].cap_id))
 			num_ctrls++;
 	}
 
@@ -377,7 +405,7 @@ int iris_ctrls_init(struct iris_inst *inst)
 		struct v4l2_ctrl *ctrl;
 
 		v4l2_id = iris_get_v4l2_id(cap[idx].cap_id);
-		if (!v4l2_id)
+		if (!v4l2_id || !iris_ctrl_offered(cap[idx].cap_id))
 			continue;
 
 		if (ctrl_idx >= num_ctrls) {
@@ -526,6 +554,40 @@ int iris_set_u32(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id)
 					     iris_get_port_info(inst, cap_id),
 					     HFI_PAYLOAD_U32,
 					     &hfi_value, sizeof(u32));
+}
+
+/*
+ * Ask the firmware to return pictures in decode order instead of display
+ * order, as the venus driver does with HFI_PROPERTY_PARAM_VDEC_OUTPUT_ORDER:
+ * only when the client enabled the display delay and set it to 0 frames.
+ * Clients that decode synchronously per picture (VA-API drivers) need it.
+ * Nothing is sent otherwise, so the firmware keeps its display-order default;
+ * without decode_order_output the two controls do not exist and stay 0.
+ */
+int iris_set_decode_order(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id)
+{
+	const struct iris_hfi_session_ops *hfi_ops = inst->hfi_session_ops;
+	u32 hfi_id = inst->fw_caps[cap_id].hfi_id;
+	u32 decode_order = 1;
+
+	if (inst->domain != DECODER)
+		return 0;
+
+	if (!inst->fw_caps[DISPLAY_DELAY_ENABLE].value ||
+	    inst->fw_caps[DISPLAY_DELAY].value)
+		return 0;
+
+	/* Qualcomm's own driver offers decode order for H.264, HEVC and VP9 only */
+	if (inst->codec != V4L2_PIX_FMT_H264 &&
+	    inst->codec != V4L2_PIX_FMT_HEVC &&
+	    inst->codec != V4L2_PIX_FMT_VP9)
+		return 0;
+
+	return hfi_ops->session_set_property(inst, hfi_id,
+					     HFI_HOST_FLAGS_NONE,
+					     iris_get_port_info(inst, cap_id),
+					     HFI_PAYLOAD_U32,
+					     &decode_order, sizeof(u32));
 }
 
 int iris_set_stage(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id)
