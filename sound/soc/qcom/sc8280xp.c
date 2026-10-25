@@ -310,6 +310,16 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	case TX_CODEC_DMA_TX_3:
 		channels->min = 1;
 		break;
+	case RX_CODEC_DMA_RX_0:
+		/*
+		 * The Kaanapali ADSP passes nothing to the RX macro from a
+		 * 16-bit RX codec DMA; 24-bit samples go through.
+		 */
+		if (!strcmp(rtd->card->driver_name, "kaanapali")) {
+			snd_mask_none(fmt);
+			snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S24_LE);
+		}
+		break;
 	case PRIMARY_MI2S_RX:
 		if (!(codec_dai->driver->playback.formats & SNDRV_PCM_FMTBIT_S16_LE)) {
 			snd_mask_none(fmt);
