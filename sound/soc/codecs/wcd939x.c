@@ -3443,6 +3443,7 @@ static int wcd939x_codec_set_jack(struct snd_soc_component *comp,
 		 * goes completely silent even though MBHC itself is armed and
 		 * powered. Hold them up for as long as a jack is registered.
 		 */
+		pm_runtime_forbid(comp->dev);
 		pm_runtime_forbid(wcd->rxdev);
 		pm_runtime_forbid(wcd->txdev);
 
@@ -3453,6 +3454,7 @@ static int wcd939x_codec_set_jack(struct snd_soc_component *comp,
 
 	pm_runtime_allow(wcd->txdev);
 	pm_runtime_allow(wcd->rxdev);
+	pm_runtime_allow(comp->dev);
 
 	return 0;
 }
