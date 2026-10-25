@@ -1207,6 +1207,12 @@
 };
 
 &swr1 {
+	/*
+	 * The headphones get PCM on port 9 (WCD9395 HIFI_PCM), as on stock,
+	 * which also sets the PCM format enable for the class-H port 2.
+	 */
+	qcom,pcm-ports-mask = <0x204>;
+
 	status = "okay";
 
 	wcd_rx: codec@0,4 {
