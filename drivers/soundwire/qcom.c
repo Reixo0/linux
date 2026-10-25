@@ -95,6 +95,9 @@
 #define SWRM_MCP_FRAME_CTRL_BANK_ADDR(m)		(0x101C + 0x40 * (m))
 #define SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK			GENMASK(2, 0)
 #define SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK			GENMASK(7, 3)
+#define SWRM_MCP_FRAME_CTRL_BANK_SSP_PERIOD_BMSK		GENMASK(23, 16)
+/* Stream synchronization point rate */
+#define SWRM_SSP_RATE						4000
 #define SWRM_MCP_BUS_CTRL					0x1044
 #define SWRM_MCP_BUS_CLK_START					BIT(1)
 #define SWRM_MCP_CFG_ADDR					0x1048
@@ -1092,6 +1095,19 @@ static int qcom_swrm_pre_bank_switch(struct sdw_bus *bus)
 
 	u32p_replace_bits(&val, ctrl->cols_index, SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK);
 	u32p_replace_bits(&val, ctrl->rows_index, SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK);
+
+	/*
+	 * Frames between stream synchronization points, minus one. PCM data
+	 * ports need it to find their sample boundaries; the downstream
+	 * driver programs it the same way.
+	 */
+	if (ctrl->version >= SWRM_VERSION_2_0_0) {
+		u32 frame = bus->params.row * bus->params.col;
+		u32 ssp = frame ? bus->params.curr_dr_freq / (frame * SWRM_SSP_RATE) : 1;
+
+		u32p_replace_bits(&val, max(ssp, 1U) - 1,
+				  SWRM_MCP_FRAME_CTRL_BANK_SSP_PERIOD_BMSK);
+	}
 
 	return ctrl->reg_write(ctrl, reg, val);
 }
