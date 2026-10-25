@@ -183,6 +183,8 @@ struct wcd939x_priv {
 	struct mutex micb_lock;
 	/* typec handling */
 	bool typec_analog_mux;
+	/* 3.5 mm jack mic/ground wired through the USBSS */
+	bool typec_hsj;
 #if IS_ENABLED(CONFIG_TYPEC)
 	enum typec_orientation typec_orientation;
 	unsigned long typec_mode;
@@ -3525,6 +3527,27 @@ static bool wcd939x_swap_gnd_mic(struct snd_soc_component *component)
 
 	return true;
 }
+
+static void wcd939x_hsj_reset_gnd_mic(struct snd_soc_component *component)
+{
+	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
+
+	/* The USBSS keeps the jack connected: each plug starts unswapped */
+	wcd939x->typec_orientation = TYPEC_ORIENTATION_NORMAL;
+	typec_switch_set(wcd939x->typec_switch, wcd939x->typec_orientation);
+}
+
+static bool wcd939x_hsj_swap_gnd_mic(struct snd_soc_component *component)
+{
+	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
+
+	wcd939x->typec_orientation =
+		wcd939x->typec_orientation == TYPEC_ORIENTATION_REVERSE ?
+			TYPEC_ORIENTATION_NORMAL : TYPEC_ORIENTATION_REVERSE;
+	typec_switch_set(wcd939x->typec_switch, wcd939x->typec_orientation);
+
+	return true;
+}
 #endif /* CONFIG_TYPEC */
 
 static int wcd939x_populate_dt_data(struct wcd939x_priv *wcd939x, struct device *dev)
@@ -3566,7 +3589,13 @@ static int wcd939x_populate_dt_data(struct wcd939x_priv *wcd939x, struct device 
 	 * consider HP lines are connected to the USBSS part
 	 */
 	np = of_graph_get_remote_node(dev->of_node, 0, 0);
-	if (np) {
+	if (np && of_property_read_bool(dev->of_node, "qcom,usbss-headset-jack")) {
+		/* only the jack's mic and ground go through the USBSS */
+		wcd939x->typec_hsj = true;
+		cfg->hsj_switch = true;
+		cfg->reset_gnd_mic = wcd939x_hsj_reset_gnd_mic;
+		cfg->swap_gnd_mic = wcd939x_hsj_swap_gnd_mic;
+	} else if (np) {
 		wcd939x->typec_analog_mux = true;
 		cfg->typec_analog_mux = true;
 		cfg->swap_gnd_mic = wcd939x_swap_gnd_mic;
@@ -3663,7 +3692,7 @@ static int wcd939x_bind(struct device *dev)
 	 * typec_switch is fetched now to avoid a probe deadlock since
 	 * the USBSS depends on the typec_mux register in wcd939x_probe()
 	 */
-	if (wcd939x->typec_analog_mux) {
+	if (wcd939x->typec_analog_mux || wcd939x->typec_hsj) {
 		wcd939x->typec_switch = fwnode_typec_switch_get(dev->fwnode);
 		if (IS_ERR(wcd939x->typec_switch))
 			return dev_err_probe(dev, PTR_ERR(wcd939x->typec_switch),
@@ -3776,7 +3805,7 @@ err_unbind:
 	component_unbind_all(dev, wcd939x);
 err_put_typec_switch:
 #if IS_ENABLED(CONFIG_TYPEC)
-	if (wcd939x->typec_analog_mux)
+	if (wcd939x->typec_analog_mux || wcd939x->typec_hsj)
 		typec_switch_put(wcd939x->typec_switch);
 #endif /* CONFIG_TYPEC */
 
