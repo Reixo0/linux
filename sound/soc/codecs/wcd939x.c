@@ -372,6 +372,9 @@ static int wcd939x_io_init(struct snd_soc_component *component)
 	snd_soc_component_write_field(component, WCD939X_ANA_BIAS,
 				      WCD939X_BIAS_PRECHRG_EN, false);
 
+	/* Bandgap fine adjust as the stock driver sets it (reset value 0x55) */
+	snd_soc_component_write(component, WCD939X_BIAS_VBG_FINE_ADJ, 0xa5);
+
 	snd_soc_component_write_field(component, WCD939X_HPH_NEW_INT_RDAC_HD2_CTL_L,
 				      WCD939X_RDAC_HD2_CTL_L_HD2_RES_DIV_CTL_L, 0x15);
 	snd_soc_component_write_field(component, WCD939X_HPH_NEW_INT_RDAC_HD2_CTL_R,
