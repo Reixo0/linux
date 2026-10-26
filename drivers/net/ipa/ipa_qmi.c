@@ -269,6 +269,10 @@ static const struct qmi_msg_handler ipa_client_msg_handlers[] = {
 	{ },
 };
 
+/* Filter statistics table entries managed by the modem (IPA v5.5+) */
+#define IPA_QMI_FILTER_STATS_START	64
+#define IPA_QMI_FILTER_STATS_COUNT	191
+
 /* Return a pointer to an init modem driver request structure, which contains
  * configuration parameters for the modem.  The modem may be started multiple
  * times, but generally these parameters don't change so we can reuse the
@@ -392,6 +396,28 @@ init_modem_driver_req(struct ipa_qmi *ipa_qmi)
 			req.hw_stats_drop_size_valid = 1;
 			req.hw_stats_drop_size = ipa->mem_offset + mem->size;
 		}
+	}
+
+	/* Newer modems manage part of the filter statistics table */
+	mem = ipa_mem_find(ipa, IPA_MEM_STATS_FILTER_ROUTE);
+	if (mem && mem->size && ipa->version >= IPA_VERSION_5_5) {
+		req.filter_stats_info_valid = 1;
+		req.filter_stats_info.start = ipa->mem_offset + mem->offset;
+		req.filter_stats_info.size = IPA_QMI_FILTER_STATS_COUNT * 16;
+		req.filter_stats_info.start_index = IPA_QMI_FILTER_STATS_START;
+		req.filter_stats_info.end_index = IPA_QMI_FILTER_STATS_START +
+						  IPA_QMI_FILTER_STATS_COUNT - 1;
+	}
+
+	/* Newer modems are told the size of the SMEM region, and use its
+	 * first 2KB for peripheral statistics.
+	 */
+	if (ipa->smem_item_size && ipa->version >= IPA_VERSION_5_5) {
+		req.smem_info_valid = 1;
+		req.smem_info.size = ipa->smem_item_size;
+		req.per_stats_smem_info_valid = 1;
+		req.per_stats_smem_info.start = ipa->smem_addr;
+		req.per_stats_smem_info.size = SZ_2K;
 	}
 
 	return &req;
