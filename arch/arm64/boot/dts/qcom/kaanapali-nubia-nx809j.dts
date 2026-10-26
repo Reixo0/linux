@@ -1101,6 +1101,12 @@
 };
 
 /* No WSA amplifiers on this board */
+&ipa {
+	firmware-name = "qcom/kaanapali/nubia/nx809j/ipa_fws.mbn";
+
+	status = "okay";
+};
+
 &lpass_wsa2macro {
 	status = "disabled";
 };
@@ -1281,6 +1287,13 @@
 &remoteproc_cdsp {
 	firmware-name = "qcom/kaanapali/nubia/nx809j/cdsp.mbn",
 			"qcom/kaanapali/nubia/nx809j/cdsp_dtb.mbn";
+};
+
+&remoteproc_mpss {
+	firmware-name = "qcom/kaanapali/nubia/nx809j/modem.mbn",
+			"qcom/kaanapali/nubia/nx809j/modem_dtb.mbn";
+
+	status = "okay";
 };
 
 &remoteproc_soccp {
