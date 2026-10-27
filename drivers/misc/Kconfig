@@ -601,4 +601,13 @@ source "drivers/misc/keba/Kconfig"
 source "drivers/misc/amd-sbi/Kconfig"
 source "drivers/misc/rp1/Kconfig"
 source "drivers/misc/issei/Kconfig"
+
+config GOODIX_TEE_FP
+	tristate "Goodix ultrasonic fingerprint platform control"
+	depends on OF && GPIOLIB && REGULATOR
+	help
+	  Power, reset and interrupt control for Goodix ultrasonic sensors
+	  whose SPI bus belongs to QTEE. Biometric commands use the signed
+	  trusted application; this is not a complete fingerprint HAL.
+
 endmenu
