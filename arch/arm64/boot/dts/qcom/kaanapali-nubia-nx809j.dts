@@ -108,6 +108,63 @@
 		#size-cells = <2>;
 		ranges;
 
+		/*
+		 * Firmware regions from the stock device tree that the UEFI
+		 * memory map (Mu-Silicium) reports as free RAM. TrustZone and
+		 * the CPUCP protect them: a write there is a synchronous
+		 * external abort.
+		 */
+		cpucp_pdp_mem: cpucp-pdp@81200000 {
+			reg = <0x0 0x81200000 0x0 0x100000>;
+			no-map;
+		};
+
+		cpucp_scandump_mem: cpucp-scandump@82000000 {
+			reg = <0x0 0x82000000 0x0 0x380000>;
+			no-map;
+		};
+
+		adsp_mhi_mem: adsp-mhi@82380000 {
+			reg = <0x0 0x82380000 0x0 0x20000>;
+			no-map;
+		};
+
+		soccp_sdi_mem: soccp-sdi@823a0000 {
+			reg = <0x0 0x823a0000 0x0 0x40000>;
+			no-map;
+		};
+
+		pmic_minidump_mem: pmic-minidump@823e0000 {
+			reg = <0x0 0x823e0000 0x0 0x80000>;
+			no-map;
+		};
+
+		qup_fw_mem: qup-fw@82460000 {
+			reg = <0x0 0x82460000 0x0 0x18000>;
+			no-map;
+		};
+
+		tz_stat_mem: tz-stat@82700000 {
+			reg = <0x0 0x82700000 0x0 0x100000>;
+			no-map;
+		};
+
+		tz_merged_mem: tz-merged@d8000000 {
+			reg = <0x0 0xd8000000 0x0 0x800000>;
+			no-map;
+		};
+
+		llcc_lpi_mem: llcc-lpi@ff800000 {
+			reg = <0x0 0xff800000 0x0 0x800000>;
+			no-map;
+		};
+
+		/* Left out of the RAM that ABL gives Android */
+		fw_top_mem: fw-top@bffdff000 {
+			reg = <0xb 0xffdff000 0x0 0x201000>;
+			no-map;
+		};
+
 		cont_splash_mem: cont-splash@fc800000 {
 			reg = <0x0 0xfc800000 0x0 0x2b00000>;
 			no-map;
