@@ -563,8 +563,16 @@ static const struct drm_panel_funcs rm692h5_panel_funcs = {
 static int rm692h5_bl_update_status(struct backlight_device *bl)
 {
 	struct mipi_dsi_device *dsi = bl_get_data(bl);
+	struct rm692h5 *ctx = mipi_dsi_get_drvdata(dsi);
 	u16 brightness = backlight_get_brightness(bl);
 	int ret;
+
+	/*
+	 * The DSI link is down while the panel is off. Keep the level: the
+	 * backlight core sends it again when drm_panel_enable() enables it.
+	 */
+	if (!ctx->panel.prepared)
+		return 0;
 
 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
 
