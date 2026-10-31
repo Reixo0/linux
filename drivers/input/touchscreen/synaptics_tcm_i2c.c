@@ -64,6 +64,7 @@
 /* Dynamic config IDs. */
 #define SYNA_DC_IN_WAKEUP_GESTURE_MODE	0x09
 #define SYNA_DC_GESTURE_MASK		0xfe
+#define SYNA_DC_REPORT_RATE		0xe6
 
 /* Status codes, i.e. header codes of a command response. */
 #define SYNA_STATUS_IDLE		0x00
@@ -186,6 +187,9 @@ struct syna_tcm {
 
 	u8 normal_config[SYNA_MAX_CONFIG_SIZE];
 	unsigned int normal_config_len;
+
+	/* Firmware's report rate code from syna,report-rate, 0 keeps its own. */
+	u32 report_rate;
 
 	unsigned int max_objects;
 	struct syna_object objects[SYNA_MAX_OBJECTS];
@@ -390,6 +394,20 @@ static int syna_set_dynamic_config(struct syna_tcm *ts, u8 id, u16 value)
 	put_unaligned_le16(value, &buf[1]);
 
 	return syna_exec_command(ts, SYNA_CMD_SET_DYNAMIC_CONFIG, buf, sizeof(buf));
+}
+
+/* A failure keeps the firmware's own rate; touch reporting stays on. */
+static void syna_apply_report_rate(struct syna_tcm *ts)
+{
+	int ret;
+
+	if (!ts->report_rate)
+		return;
+
+	ret = syna_set_dynamic_config(ts, SYNA_DC_REPORT_RATE, ts->report_rate);
+	if (ret)
+		dev_err(ts->dev, "report rate %u not applied: %d\n",
+			ts->report_rate, ret);
 }
 
 /* Extract a big field of @bits from the report's bit stream at @offset. */
@@ -867,6 +885,8 @@ static int syna_reinit_hw(struct syna_tcm *ts)
 	if (ret)
 		goto err_power_off;
 
+	syna_apply_report_rate(ts);
+
 	return 0;
 
 err_power_off:
@@ -910,9 +930,13 @@ static int syna_probe_common(struct syna_tcm *ts)
 	if (ret)
 		return ret;
 
+	device_property_read_u32(dev, "syna,report-rate", &ts->report_rate);
+
 	ret = syna_setup(ts);
 	if (ret)
 		return ret;
+
+	syna_apply_report_rate(ts);
 
 	ret = input_register_device(ts->input);
 	if (ret)
@@ -1012,6 +1036,8 @@ static int syna_resume(struct device *dev)
 		if (ret)
 			dev_warn(dev, "failed to read touch report config: %d\n", ret);
 
+		syna_apply_report_rate(ts);
+
 		ts->gesture_enabled = false;
 		ts->suspended = false;
 		enable_irq(ts->irq);
@@ -1029,6 +1055,8 @@ static int syna_resume(struct device *dev)
 				return ret;
 			}
 		}
+
+		syna_apply_report_rate(ts);
 
 		ts->suspended = false;
 		enable_irq(ts->irq);
