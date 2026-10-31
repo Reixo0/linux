@@ -71,6 +71,7 @@
 /* MAP static DMA buffer on DSP User PD */
 #define ADSP_MMAP_DMA_BUFFER  6
 /* Add memory to userPD pool, for user heap */
+#define ADSP_MMAP_REMOTE_HEAP_ADDR 8
 #define ADSP_MMAP_ADD_PAGES 0x1000
 /* Add memory to userPD pool, for LLC heap */
 #define ADSP_MMAP_ADD_PAGES_LLC 0x3000,
@@ -117,6 +118,9 @@
 #define FASTRPC_RMID_INIT_CREATE	6
 #define FASTRPC_RMID_INIT_CREATE_ATTR	7
 #define FASTRPC_RMID_INIT_CREATE_STATIC	8
+/* What the audio PD starts with; it grows into the rest of the region. */
+#define FASTRPC_REMOTE_HEAP_INIT	SZ_12M
+#define FASTRPC_REMOTE_HEAP_ALIGN	SZ_4M
 #define FASTRPC_RMID_INIT_MEM_MAP      10
 #define FASTRPC_RMID_INIT_MEM_UNMAP    11
 
@@ -317,6 +321,7 @@ struct fastrpc_channel_ctx {
 	/* Audio PD reserved remote heap region */
 	phys_addr_t remote_heap_addr;
 	u64 remote_heap_size;
+	u64 remote_heap_used;
 	u32 dsp_attributes[FASTRPC_MAX_DSP_ATTRIBUTES];
 	struct fastrpc_device *secure_fdevice;
 	struct fastrpc_device *fdevice;
@@ -1518,7 +1523,8 @@ static int fastrpc_init_create_static_process(struct fastrpc_user *fl,
 	spin_lock_irqsave(&cctx->lock, flags);
 	if (!cctx->audio_init_mem) {
 		pages[0].addr = cctx->remote_heap_addr;
-		pages[0].size = cctx->remote_heap_size;
+		pages[0].size = FASTRPC_REMOTE_HEAP_INIT;
+		cctx->remote_heap_used = FASTRPC_REMOTE_HEAP_INIT;
 		cctx->audio_init_mem = true;
 		inbuf.pageslen = 1;
 		sent_heap = true;
@@ -2058,6 +2064,57 @@ static int fastrpc_req_munmap(struct fastrpc_user *fl, char __user *argp)
 	return err;
 }
 
+/*
+ * The audio PD grows its heap with remote heap maps. The whole region already
+ * belongs to the DSP's VMIDs, and the CPU must not touch it: hand out slices,
+ * which the static PD keeps for as long as the channel lives.
+ */
+static int fastrpc_req_mmap_remote_heap(struct fastrpc_user *fl,
+					struct fastrpc_req_mmap *req)
+{
+	struct fastrpc_channel_ctx *cctx = fl->cctx;
+	struct fastrpc_invoke_args args[3] = { [0 ... 2] = { 0 } };
+	struct fastrpc_mmap_req_msg req_msg;
+	struct fastrpc_mmap_rsp_msg rsp_msg;
+	struct fastrpc_phy_page pages;
+	unsigned long flags;
+	u64 off, size;
+	int err;
+
+	size = ALIGN(req->size, FASTRPC_REMOTE_HEAP_ALIGN);
+	spin_lock_irqsave(&cctx->lock, flags);
+	off = cctx->remote_heap_used;
+	if (!cctx->remote_heap_size || size > cctx->remote_heap_size ||
+	    off > cctx->remote_heap_size - size) {
+		spin_unlock_irqrestore(&cctx->lock, flags);
+		return -ENOMEM;
+	}
+	cctx->remote_heap_used = off + size;
+	spin_unlock_irqrestore(&cctx->lock, flags);
+
+	req_msg.client_id = fl->client_id;
+	req_msg.flags = req->flags;
+	req_msg.vaddr = 0;
+	req_msg.num = sizeof(pages);
+	args[0].ptr = (u64)(uintptr_t)&req_msg;
+	args[0].length = sizeof(req_msg);
+
+	pages.addr = cctx->remote_heap_addr + off;
+	pages.size = size;
+	args[1].ptr = (u64)(uintptr_t)&pages;
+	args[1].length = sizeof(pages);
+
+	args[2].ptr = (u64)(uintptr_t)&rsp_msg;
+	args[2].length = sizeof(rsp_msg);
+
+	err = fastrpc_internal_invoke(fl, true, FASTRPC_INIT_HANDLE,
+				      FASTRPC_SCALARS(FASTRPC_RMID_INIT_MMAP, 2, 1), &args[0]);
+	if (err)
+		return err;
+	req->vaddrout = rsp_msg.vaddr;
+	return 0;
+}
+
 static int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp)
 {
 	struct fastrpc_invoke_args args[3] = { [0 ... 2] = { 0 } };
@@ -2072,6 +2129,13 @@ static int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp)
 
 	if (copy_from_user(&req, argp, sizeof(req)))
 		return -EFAULT;
+
+	if (req.flags == ADSP_MMAP_REMOTE_HEAP_ADDR) {
+		err = fastrpc_req_mmap_remote_heap(fl, &req);
+		if (err)
+			return err;
+		return copy_to_user(argp, &req, sizeof(req)) ? -EFAULT : 0;
+	}
 
 	if (req.flags != ADSP_MMAP_ADD_PAGES) {
 		dev_err(dev, "flag not supported 0x%x\n", req.flags);
