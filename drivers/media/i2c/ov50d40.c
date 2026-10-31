@@ -2083,6 +2083,7 @@ static void ov50d40_update_pad_format(const struct ov50d40_mode *mode,
 }
 
 static int ov50d40_set_pad_format(struct v4l2_subdev *sd,
+                                  const struct v4l2_subdev_client_info *ci,
 				  struct v4l2_subdev_state *state,
 				  struct v4l2_subdev_format *fmt)
 {
@@ -2156,6 +2157,7 @@ static int ov50d40_enum_frame_size(struct v4l2_subdev *sd,
 }
 
 static int ov50d40_get_selection(struct v4l2_subdev *sd,
+                                 const struct v4l2_subdev_client_info *ci,
 				 struct v4l2_subdev_state *sd_state,
 				 struct v4l2_subdev_selection *sel)
 {
@@ -2188,7 +2190,7 @@ static int ov50d40_init_state(struct v4l2_subdev *sd,
 		},
 	};
 
-	ov50d40_set_pad_format(sd, state, &fmt);
+	ov50d40_set_pad_format(sd, NULL, state, &fmt);
 
 	return 0;
 }
