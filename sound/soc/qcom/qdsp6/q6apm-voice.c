@@ -774,7 +774,7 @@ static int q6apm_voice_ucm_put(struct q6apm_voice *voice, bool requested)
 		voice->ucm_pinned = true;
 		WRITE_ONCE(voice->ucm_requested, true);
 		/* UCM card probing may briefly enable devices. Debounce START. */
-		queue_delayed_work(system_long_wq, &voice->ucm_work, msecs_to_jiffies(300));
+		queue_delayed_work(system_long_wq, &voice->ucm_work, msecs_to_jiffies(2000));
 		return 1;
 	}
 	/* Never hold operation_lock while joining a worker that takes it. */
