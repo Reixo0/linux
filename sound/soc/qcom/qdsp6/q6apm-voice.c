@@ -723,7 +723,7 @@ out:
 	cleanup = q6apm_voice_call_cleanup(voice);
 	if (cleanup)
 		dev_err(component->dev, "voice call cleanup: %d; retry %s=0\n", cleanup,
-			voice->ucm_pinned ? "Voice Call UCM Switch" : "Voice Call Switch");
+			voice->ucm_pinned ? "Voice Call UCM Switch" : "Voice Session Switch");
 	return ret ? ret : cleanup;
 }
 
@@ -863,7 +863,7 @@ struct q6apm_voice *q6apm_voice_create(struct snd_soc_component *component)
 {
 	struct snd_kcontrol_new controls[3] = { {
 		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-		.name = "Voice Call Switch",
+		.name = "Voice Session Switch",
 		.info = snd_ctl_boolean_mono_info,
 		.get = q6apm_voice_get,
 		.put = q6apm_voice_put,
