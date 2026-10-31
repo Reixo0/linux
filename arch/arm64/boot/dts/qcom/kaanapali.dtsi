@@ -337,6 +337,14 @@
 		#size-cells = <2>;
 		ranges;
 
+		adsp_rpc_remote_heap_mem: adsp-rpc-remote-heap {
+			compatible = "shared-dma-pool";
+			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
+			alignment = <0x0 0x400000>;
+			size = <0x0 0x4000000>;
+			no-map;
+		};
+
 		pdp_mem: pdp@81300000 {
 			reg = <0x0 0x81300000 0x0 0x100000>;
 			no-map;
@@ -3181,6 +3189,9 @@
 					compatible = "qcom,kaanapali-fastrpc";
 					qcom,glink-channels = "fastrpcglink-apps-dsp";
 					label = "adsp";
+					memory-region = <&adsp_rpc_remote_heap_mem>;
+					qcom,vmids = <QCOM_SCM_VMID_LPASS
+						      QCOM_SCM_VMID_ADSP_HEAP>;
 					#address-cells = <1>;
 					#size-cells = <0>;
 
