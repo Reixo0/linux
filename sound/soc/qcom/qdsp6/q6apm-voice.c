@@ -649,6 +649,8 @@ static int q6apm_voice_call_cleanup(struct q6apm_voice *voice)
 	}
 	if (ret)
 		return ret;
+	if (voice->backends[0])
+		q6apm_voice_backend_trigger(voice->backends[0], SNDRV_PCM_TRIGGER_STOP);
 	/* Keep physical clocks/ports alive until both DSP STOP replies are known. */
 	for (i = 1; i >= 0; i--)
 		q6apm_voice_backend_close(&voice->backends[i]);
@@ -710,8 +712,10 @@ static int q6apm_voice_call_put(struct q6apm_voice *voice, bool requested)
 		goto out;
 	scoped_guard(mutex, &voice->lock) {
 		ret = q6apm_voice_run_session(voice);
-		if (!ret)
+		if (!ret) {
 			voice->call_active = true;
+			q6apm_voice_backend_trigger(voice->backends[0], SNDRV_PCM_TRIGGER_START);
+		}
 	}
 	if (!ret)
 		return 1;

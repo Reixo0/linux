@@ -65,6 +65,7 @@ static inline bool q6apm_voice_backend_link(const struct snd_soc_pcm_runtime *rt
 
 int q6apm_voice_backend_open(struct snd_soc_component *component, unsigned int graph,
 			     struct snd_pcm_substream **stream);
+void q6apm_voice_backend_trigger(struct snd_pcm_substream *substream, int cmd);
 void q6apm_voice_backend_close(struct snd_pcm_substream **stream);
 
 #endif

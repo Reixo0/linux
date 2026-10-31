@@ -18,6 +18,25 @@ static void q6apm_voice_interval(struct snd_pcm_hw_params *params, int key, unsi
 	*interval = (struct snd_interval) { .min = value, .max = value, .integer = 1 };
 }
 
+/*
+ * The DSP moves the call audio, so the backends are never started as PCMs. A
+ * codec that powers up from its trigger, like the AW88461, still has to see one.
+ */
+void q6apm_voice_backend_trigger(struct snd_pcm_substream *substream, int cmd)
+{
+	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+	struct snd_soc_dai *dai;
+	int i, ret;
+
+	for_each_rtd_codec_dais(rtd, i, dai) {
+		if (!dai->driver->ops || !dai->driver->ops->trigger)
+			continue;
+		ret = dai->driver->ops->trigger(substream, cmd, dai);
+		if (ret)
+			dev_err(dai->dev, "voice backend trigger %d: %d\n", cmd, ret);
+	}
+}
+
 void q6apm_voice_backend_close(struct snd_pcm_substream **stream)
 {
 	struct snd_pcm_substream *substream = *stream;
