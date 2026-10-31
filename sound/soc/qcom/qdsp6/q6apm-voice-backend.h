@@ -41,7 +41,7 @@ static const struct q6apm_voice_board q6apm_voice_boards[] = {
 		.rx_port = PRIMARY_MI2S_RX,
 		.tx_port = TX_CODEC_DMA_TX_3,
 		.rx_rate = 48000,
-		.rx_format = SNDRV_PCM_FORMAT_S16_LE,
+		.rx_format = SNDRV_PCM_FORMAT_S32_LE,
 		.tx_decimators = 0x1,
 		.volume_levels = 6,
 	},
