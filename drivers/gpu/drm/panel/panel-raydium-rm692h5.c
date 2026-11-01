@@ -791,9 +791,11 @@ static int rm692h5_bl_update_status(struct backlight_device *bl)
 	 * Idle mode keeps ambient_brightness, also while the host wakes only to
 	 * draw, and leaving it restores this level. A blank into idle mode sets
 	 * its own level: brightness 0 first would show a dark frame, and the
-	 * host may already be off.
+	 * host may already be off. The DSI link is down while the panel is off:
+	 * the backlight core sends the level again when it is enabled.
 	 */
-	if (ctx->idle || (READ_ONCE(ambient) && backlight_is_blank(bl)))
+	if (!ctx->panel.prepared || ctx->idle ||
+	    (READ_ONCE(ambient) && backlight_is_blank(bl)))
 		return 0;
 
 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
