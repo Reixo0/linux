@@ -3137,6 +3137,7 @@
 						IPCC_MPROC_SIGNAL_GLINK_QMP>;
 
 				qcom,remote-pid = <1>;
+				wakeup-source;
 
 				label = "mpss";
 			};

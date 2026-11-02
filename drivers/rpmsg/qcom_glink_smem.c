@@ -10,6 +10,7 @@
 #include <linux/of_irq.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
+#include <linux/suspend.h>
 #include <linux/mailbox_client.h>
 #include <linux/mfd/syscon.h>
 #include <linux/slab.h>
@@ -45,6 +46,8 @@ struct qcom_glink_smem {
 	struct mbox_chan *mbox_chan;
 
 	u32 remote_pid;
+	/* Messages from the remote wake the system (DT "wakeup-source") */
+	bool wakeup;
 };
 
 struct glink_smem_pipe {
@@ -212,6 +215,15 @@ static irqreturn_t qcom_glink_smem_intr(int irq, void *data)
 {
 	struct qcom_glink_smem *smem = data;
 
+	/*
+	 * The IRQ stays enabled during suspend, but a message from the remote
+	 * (e.g. an incoming call from the modem) has to resume the system
+	 * before anyone can act on it. No wakeup source object: removed with
+	 * the edge's device on a remoteproc stop, it oopsed in device_del().
+	 */
+	if (smem->wakeup)
+		pm_system_wakeup();
+
 	qcom_glink_native_rx(smem->glink);
 
 	return IRQ_HANDLED;
@@ -310,6 +322,8 @@ struct qcom_glink_smem *qcom_glink_smem_register(struct device *parent,
 		ret = PTR_ERR(tx_pipe->fifo);
 		goto err_put_dev;
 	}
+
+	smem->wakeup = of_property_read_bool(smem->dev.of_node, "wakeup-source");
 
 	smem->irq = of_irq_get(smem->dev.of_node, 0);
 	ret = devm_request_irq(&smem->dev, smem->irq, qcom_glink_smem_intr,
