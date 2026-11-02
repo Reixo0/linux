@@ -723,7 +723,11 @@ static int wcd939x_usbss_mux_set(struct typec_mux_dev *mux,
 		else
 			usbss->svid = 0; // No SVID
 
-		ret = wcd939x_usbss_set(usbss);
+		/* Outside DP, a headset jack board keeps its jack routing */
+		if (usbss->hsj && !usbss->dp_active)
+			ret = wcd939x_usbss_hsj_set(usbss);
+		else
+			ret = wcd939x_usbss_set(usbss);
 	}
 
 	mutex_unlock(&usbss->lock);
