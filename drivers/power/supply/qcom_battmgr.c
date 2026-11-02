@@ -465,6 +465,18 @@ static int qcom_battmgr_bat_sm8350_update(struct qcom_battmgr *battmgr,
 
 	mutex_lock(&battmgr->lock);
 	ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET, prop, 0);
+	/*
+	 * SM8550 firmware reports power in nW in 32 bits, which wraps above
+	 * about 2 W, so work it out from the voltage and current instead
+	 */
+	if (!ret && psp == POWER_SUPPLY_PROP_POWER_NOW &&
+	    battmgr->variant == QCOM_BATTMGR_SM8550) {
+		ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET,
+						    BATT_CURR_NOW, 0);
+		if (!ret)
+			ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET,
+							    BATT_VOLT_NOW, 0);
+	}
 	mutex_unlock(&battmgr->lock);
 
 	return ret;
@@ -563,6 +575,11 @@ static int qcom_battmgr_bat_get_property(struct power_supply *psy,
 		val->intval = battmgr->status.current_now;
 		break;
 	case POWER_SUPPLY_PROP_POWER_NOW:
+		if (battmgr->variant == QCOM_BATTMGR_SM8550) {
+			val->intval = div_s64((s64)battmgr->status.current_now *
+					      battmgr->status.voltage_now, 1000000);
+			break;
+		}
 		val->intval = battmgr->status.power_now;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
