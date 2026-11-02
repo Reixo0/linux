@@ -275,6 +275,8 @@ struct fastrpc_invoke_ctx {
 	bool is_work_done;
 	/* process updates poll memory instead of glink response */
 	bool is_polled;
+	/* a signal interrupted the wait; the DSP still owns the request */
+	bool interrupted;
 	struct kref refcount;
 	struct list_head node; /* list of ctxs */
 	struct completion work;
@@ -1355,6 +1357,36 @@ static int fastrpc_wait_for_completion(struct fastrpc_invoke_ctx *ctx,
 	return fastrpc_wait_for_response(ctx, kernel);
 }
 
+/*
+ * A signal, also the freezer's on suspend, can interrupt a user invoke after
+ * the DSP got the request, and the ioctl then restarts. Sending the request
+ * again would leave the DSP with two from one thread: a user PD's
+ * adsp_listener then fails its next request ("prevCtx == notify" in
+ * listener_hexagon.c) and the DSP crashes. Wait for the interrupted context
+ * instead, as the downstream driver does.
+ */
+static struct fastrpc_invoke_ctx *
+fastrpc_context_restore_interrupted(struct fastrpc_user *fl, u32 handle, u32 sc,
+				    struct fastrpc_invoke_args *args)
+{
+	struct fastrpc_invoke_ctx *ctx = NULL, *ictx;
+
+	spin_lock(&fl->lock);
+	list_for_each_entry(ictx, &fl->pending, node) {
+		if (ictx->interrupted && ictx->pid == current->pid &&
+		    ictx->sc == sc && ictx->msg.handle == handle) {
+			ictx->interrupted = false;
+			/* The arguments of the restarted ioctl, same contents */
+			ictx->args = args;
+			ctx = ictx;
+			break;
+		}
+	}
+	spin_unlock(&fl->lock);
+
+	return ctx;
+}
+
 static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
 				   u32 handle, u32 sc,
 				   struct fastrpc_invoke_args *args)
@@ -1373,6 +1405,12 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
 	if (handle == FASTRPC_INIT_HANDLE && !kernel) {
 		dev_warn_ratelimited(fl->sctx->dev, "user app trying to send a kernel RPC message (%d)\n",  handle);
 		return -EPERM;
+	}
+
+	if (!kernel) {
+		ctx = fastrpc_context_restore_interrupted(fl, handle, sc, args);
+		if (ctx)
+			goto wait;
 	}
 
 	ctx = fastrpc_context_alloc(fl, kernel, sc, args);
@@ -1397,6 +1435,7 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
 	if (handle > FASTRPC_MAX_STATIC_HANDLE && fl->pd == USER_PD && fl->poll_mode)
 		ctx->is_polled = true;
 
+wait:
 	err = fastrpc_wait_for_completion(ctx, kernel);
 	if (err)
 		goto bail;
@@ -1424,6 +1463,7 @@ bail:
 
 	if (err == -ERESTARTSYS) {
 		spin_lock(&fl->lock);
+		ctx->interrupted = true;
 		list_for_each_entry_safe(buf, b, &fl->mmaps, node) {
 			list_del(&buf->node);
 			list_add_tail(&buf->node, &fl->cctx->invoke_interrupted_mmaps);
