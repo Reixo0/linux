@@ -8781,3 +8781,5 @@
 		};
 	};
 };
+
+#include "kaanapali-cpu-cooling.dtsi"
