@@ -1443,6 +1443,7 @@ static struct clk_branch gcc_disp_hf_axi_clk = {
 		.hw.init = &(const struct clk_init_data) {
 			.name = "gcc_disp_hf_axi_clk",
 			.ops = &clk_branch2_ops,
+			.flags = CLK_IGNORE_UNUSED,
 		},
 	},
 };
@@ -1458,6 +1459,7 @@ static struct clk_branch gcc_disp_sf_axi_clk = {
 		.hw.init = &(const struct clk_init_data) {
 			.name = "gcc_disp_sf_axi_clk",
 			.ops = &clk_branch2_aon_ops,
+			.flags = CLK_IGNORE_UNUSED,
 		},
 	},
 };
@@ -1827,6 +1829,7 @@ static struct clk_branch gcc_qmip_disp_dcp_sf_ahb_clk = {
 		.hw.init = &(const struct clk_init_data) {
 			.name = "gcc_qmip_disp_dcp_sf_ahb_clk",
 			.ops = &clk_branch2_ops,
+			.flags = CLK_IGNORE_UNUSED,
 		},
 	},
 };
