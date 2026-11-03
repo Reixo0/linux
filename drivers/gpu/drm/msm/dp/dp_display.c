@@ -56,6 +56,9 @@ struct msm_dp_display_private {
 	bool phy_initialized;
 	bool audio_supported;
 
+	/* keeps the display controller up while this controller is up */
+	struct device_link *dpu_link;
+
 	struct mutex plugged_lock;
 	bool plugged;
 	/* unplugged while the stream was on: retrain on the next plug */
@@ -308,6 +311,18 @@ static int msm_dp_display_bind(struct device *dev, struct device *master,
 
 	dp->drm_dev = drm;
 	dp->aux->drm_dev = drm;
+
+	/*
+	 * AUX transfers time out while the display controller is runtime
+	 * suspended, as it is with a command mode panel switched off: a
+	 * monitor plugged in then hangs its detection. Resume the display
+	 * controller whenever this controller resumes.
+	 */
+	dp->dpu_link = device_link_add(dev, drm->dev,
+				       DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
+	if (!dp->dpu_link)
+		dev_warn(dev, "failed to link to the display controller\n");
+
 	rc = msm_dp_aux_register(dp->aux);
 	if (rc) {
 		DRM_ERROR("DRM DP AUX register failed\n");
@@ -316,6 +331,10 @@ static int msm_dp_display_bind(struct device *dev, struct device *master,
 
 	return 0;
 end:
+	if (dp->dpu_link) {
+		device_link_del(dp->dpu_link);
+		dp->dpu_link = NULL;
+	}
 	return rc;
 }
 
@@ -329,6 +348,10 @@ static void msm_dp_display_unbind(struct device *dev, struct device *master,
 	of_dp_aux_depopulate_bus(dp->aux);
 
 	msm_dp_aux_unregister(dp->aux);
+	if (dp->dpu_link) {
+		device_link_del(dp->dpu_link);
+		dp->dpu_link = NULL;
+	}
 	dp->drm_dev = NULL;
 	dp->aux->drm_dev = NULL;
 	priv->kms->dp[dp->id] = NULL;
