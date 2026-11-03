@@ -1590,10 +1590,16 @@ static int msm_dp_pm_runtime_suspend(struct device *dev)
 
 	disable_irq(dp->irq);
 
-	if (dp->msm_dp_display.is_edp) {
-		msm_dp_display_host_phy_exit(dp);
+	/*
+	 * The controller loses its state while the display subsystem is
+	 * powered off, as with a command mode panel switched off. A PHY left
+	 * marked initialized would then not be set up again on the next
+	 * plug, and every AUX transfer would time out. A DP controller only
+	 * suspends with nothing plugged in, so let the PHY go as well.
+	 */
+	msm_dp_display_host_phy_exit(dp);
+	if (dp->msm_dp_display.is_edp)
 		msm_dp_aux_hpd_disable(dp->aux);
-	}
 	msm_dp_display_host_deinit(dp);
 
 	return 0;
