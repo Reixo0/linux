@@ -333,6 +333,8 @@ int dpu_encoder_helper_wait_for_irq(struct dpu_encoder_phys *phys_enc,
 
 void dpu_encoder_helper_phys_cleanup(struct dpu_encoder_phys *phys_enc);
 
+void dpu_encoder_helper_release_dsc(struct dpu_encoder_phys *phys_enc);
+
 void dpu_encoder_helper_phys_setup_cwb(struct dpu_encoder_phys *phys_enc,
 				       bool enable);
 

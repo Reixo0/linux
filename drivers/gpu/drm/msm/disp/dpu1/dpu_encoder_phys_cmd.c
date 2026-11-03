@@ -575,6 +575,8 @@ static void dpu_encoder_phys_cmd_disable(struct dpu_encoder_phys *phys_enc)
 		ctl->ops.update_pending_flush_intf(ctl, phys_enc->hw_intf->idx);
 	}
 
+	dpu_encoder_helper_release_dsc(phys_enc);
+
 	phys_enc->enable_state = DPU_ENC_DISABLED;
 }
 

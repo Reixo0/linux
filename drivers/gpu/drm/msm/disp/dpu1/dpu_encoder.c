@@ -2256,6 +2256,25 @@ static void dpu_encoder_unprep_dsc(struct dpu_encoder_virt *dpu_enc)
  * dpu_encoder_helper_phys_cleanup - helper to cleanup dpu pipeline
  * @phys_enc: Pointer to physical encoder structure
  */
+/**
+ * dpu_encoder_helper_release_dsc - unbind the encoder's DSC blocks from
+ *	their pingpongs and turn them off
+ * @phys_enc: Pointer to physical encoder structure
+ *
+ * A command mode encoder keeps its CTL and mixers when it stops, but a DSC
+ * left bound to a pingpong takes the pixels of the next pipeline given that
+ * pingpong, such as a DisplayPort monitor enabled while the panel is off,
+ * and that pipeline never completes a frame. The DSC is set up again on the
+ * next enable and kickoff.
+ */
+void dpu_encoder_helper_release_dsc(struct dpu_encoder_phys *phys_enc)
+{
+	struct dpu_encoder_virt *dpu_enc = to_dpu_encoder_virt(phys_enc->parent);
+
+	if (dpu_enc->dsc && dpu_enc->cur_master == phys_enc)
+		dpu_encoder_unprep_dsc(dpu_enc);
+}
+
 void dpu_encoder_helper_phys_cleanup(struct dpu_encoder_phys *phys_enc)
 {
 	struct dpu_hw_ctl *ctl = phys_enc->hw_ctl;
