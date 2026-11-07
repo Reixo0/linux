@@ -252,13 +252,14 @@
 		/*
 		 * Game mode slider. Downstream reads GPIO 97 (and its complement
 		 * on GPIO 174) and reports it as SW_PEN_INSERTED for lack of a
-		 * better code; kept the same for now.
+		 * better code; kept the same for now. GPIO 97 is low while the
+		 * slider is on.
 		 */
 		switch-game-mode {
 			label = "Game Mode Switch";
 			linux,input-type = <EV_SW>;
 			linux,code = <SW_PEN_INSERTED>;
-			gpios = <&tlmm 97 GPIO_ACTIVE_HIGH>;
+			gpios = <&tlmm 97 GPIO_ACTIVE_LOW>;
 			debounce-interval = <30>;
 		};
 	};
