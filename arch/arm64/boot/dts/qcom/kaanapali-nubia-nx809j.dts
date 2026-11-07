@@ -1562,6 +1562,72 @@
 		pinctrl-0 = <&micropump_en_default>;
 		pinctrl-names = "default";
 	};
+
+	led-controller@6a {
+		compatible = "awinic,aw22127";
+		reg = <0x6a>;
+		reset-gpios = <&pmh0101_gpios 13 GPIO_ACTIVE_LOW>;
+
+		pinctrl-0 = <&rgb_reset_default>;
+		pinctrl-names = "default";
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* The RedMagic logo next to the cameras */
+		multi-led@0 {
+			reg = <0>;
+			color = <LED_COLOR_ID_RGB>;
+			function = "logo";
+		};
+
+		/* The "game mode" light */
+		multi-led@1 {
+			reg = <1>;
+			color = <LED_COLOR_ID_RGB>;
+			function = "gamemode";
+		};
+	};
+};
+
+
+/*
+ * Shoulder triggers: an Awinic AW96205 capacitive sensor under each, the
+ * downstream "nubia_tgk_aw_sar" (trigger game keys). Both take the vendor's
+ * register file; the program in their flash is left alone.
+ */
+&i2c9 {
+	status = "okay";
+
+	trigger@13 {
+		compatible = "awinic,aw96205";
+		reg = <0x13>;
+		interrupts-extended = <&tlmm 200 IRQ_TYPE_EDGE_FALLING>;
+		vcc-supply = <&vreg_l9b_2p9>;
+		firmware-name = "qcom/kaanapali/nubia/nx809j/aw9620x_reg_0.bin";
+		label = "Left shoulder trigger";
+		linux,code = <BTN_TL>;
+
+		pinctrl-0 = <&trigger_left_int_default>;
+		pinctrl-names = "default";
+	};
+};
+
+&i2c20 {
+	status = "okay";
+
+	trigger@12 {
+		compatible = "awinic,aw96205";
+		reg = <0x12>;
+		interrupts-extended = <&tlmm 201 IRQ_TYPE_EDGE_FALLING>;
+		vcc-supply = <&vreg_l9b_2p9>;
+		firmware-name = "qcom/kaanapali/nubia/nx809j/aw9620x_reg_1.bin";
+		label = "Right shoulder trigger";
+		linux,code = <BTN_TR>;
+
+		pinctrl-0 = <&trigger_right_int_default>;
+		pinctrl-names = "default";
+	};
 };
 
 &i2c_hub_3 {
@@ -1776,6 +1842,13 @@
 		function = "normal";
 		power-source = <0>;
 		qcom,drive-strength = <PMIC_GPIO_STRENGTH_LOW>;
+	};
+
+	rgb_reset_default: rgb-reset-default-state {
+		pins = "gpio13";
+		function = "normal";
+		power-source = <0>;
+		qcom,drive-strength = <PMIC_GPIO_STRENGTH_MED>;
 	};
 };
 
@@ -2140,6 +2213,20 @@
 		function = "gpio";
 		drive-strength = <8>;
 		bias-pull-down;
+	};
+
+	trigger_left_int_default: trigger-left-int-default-state {
+		pins = "gpio200";
+		function = "gpio";
+		drive-strength = <6>;
+		bias-pull-up;
+	};
+
+	trigger_right_int_default: trigger-right-int-default-state {
+		pins = "gpio201";
+		function = "gpio";
+		drive-strength = <6>;
+		bias-pull-up;
 	};
 };
 
