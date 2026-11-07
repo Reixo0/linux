@@ -1898,6 +1898,35 @@
 	};
 };
 
+&pmh0101_flash {
+	status = "okay";
+
+	/*
+	 * The rear flash: a warm and a cool white LED, two channels each, with
+	 * the downstream limits. Downstream also lists both together as a third
+	 * LED, which would share their channels; light both instead.
+	 */
+	led-0 {
+		function = LED_FUNCTION_FLASH;
+		function-enumerator = <0>;
+		color = <LED_COLOR_ID_YELLOW>;
+		led-sources = <1>, <4>;
+		led-max-microamp = <500000>;
+		flash-max-microamp = <2000000>;
+		flash-max-timeout-us = <1280000>;
+	};
+
+	led-1 {
+		function = LED_FUNCTION_FLASH;
+		function-enumerator = <1>;
+		color = <LED_COLOR_ID_WHITE>;
+		led-sources = <2>, <3>;
+		led-max-microamp = <500000>;
+		flash-max-microamp = <2000000>;
+		flash-max-timeout-us = <1280000>;
+	};
+};
+
 &pmh0101_pwm {
 	status = "okay";
 };
