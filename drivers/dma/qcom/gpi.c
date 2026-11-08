@@ -527,6 +527,12 @@ struct gpi_desc {
 	struct gchan *gchan;
 	struct gpi_tre tre[MAX_TRE];
 	u32 num_tre;
+	/*
+	 * No TRE of this descriptor raises an event: the TX half of an I2C
+	 * read, whose GO TRE links to the RX channel. It is done when that
+	 * read completes.
+	 */
+	bool linked;
 };
 
 static const u32 GPII_CHAN_DIR[MAX_CHANNELS_PER_GPII] = {
@@ -910,6 +916,36 @@ exit_irq:
 	return IRQ_HANDLED;
 }
 
+/*
+ * An RX completion finishes the I2C read it belongs to, and with it the TX
+ * descriptor the read was started from, which raises no event of its own.
+ * Retire such descriptors at the head of the TX channel: free their TREs,
+ * which nothing else would until a later write completed (a run of reads
+ * fills the ring), and drop them, so the next TX event completes the
+ * descriptor it is for. Their callback is not run; the read's is.
+ */
+static void gpi_retire_linked_tx(struct gpii *gpii)
+{
+	struct gchan *tx = &gpii->gchan[GPI_TX_CHAN];
+	struct virt_dma_desc *vd;
+	struct gpi_desc *desc;
+	unsigned long flags;
+
+	spin_lock_irqsave(&tx->vc.lock, flags);
+	while ((vd = vchan_next_desc(&tx->vc))) {
+		desc = to_gpi_desc(vd);
+		if (!desc->linked || !desc->db)
+			break;
+		tx->ch_ring.rp = desc->db;
+		list_del(&vd->node);
+		kfree(desc);
+	}
+	spin_unlock_irqrestore(&tx->vc.lock, flags);
+
+	/* make sure rp updates are immediately visible to all cores */
+	smp_wmb();
+}
+
 /* process DMA Immediate completion data events */
 static void gpi_process_imed_data_event(struct gchan *gchan,
 					struct immediate_data_event *imed_event)
@@ -990,6 +1026,9 @@ gpi_free_desc:
 	spin_unlock_irqrestore(&gchan->vc.lock, flags);
 	kfree(gpi_desc);
 	gpi_desc = NULL;
+
+	if (chid == GPI_RX_CHAN)
+		gpi_retire_linked_tx(gpii);
 }
 
 /* processing transfer completion events */
@@ -1069,6 +1108,9 @@ gpi_free_desc:
 	spin_unlock_irqrestore(&gchan->vc.lock, flags);
 	kfree(gpi_desc);
 	gpi_desc = NULL;
+
+	if (chid == GPI_RX_CHAN)
+		gpi_retire_linked_tx(gpii);
 }
 
 /* process all events */
@@ -1673,6 +1715,8 @@ static int gpi_create_i2c_tre(struct gchan *chan, struct gpi_desc *desc,
 		else
 			tre->dword[3] |= u32_encode_bits(1, TRE_FLAGS_CHAIN);
 	}
+
+	desc->linked = i2c->op == I2C_WRITE && i2c->multi_msg;
 
 	if (i2c->op == I2C_READ || i2c->multi_msg == false) {
 		/* create the DMA TRE */
