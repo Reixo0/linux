@@ -193,12 +193,19 @@
 		 * Same layout as downstream (incl. write-combine mem-type 0), so
 		 * Android shows our log in /sys/fs/pstore. A cached mapping would
 		 * lose the log in the CPU caches on a hard reset.
+		 *
+		 * The RAM isn't refreshed for a moment during a reset, so about 2%
+		 * of the bytes come back flipped. Reed-Solomon parity repairs most
+		 * of them, the header too; a flipped start or size made Linux show
+		 * stale data instead of the last log. Android (ecc 0) still reads
+		 * the text, just uncorrected.
 		 */
 		ramoops@e2000000 {
 			compatible = "ramoops";
 			reg = <0x0 0xe2000000 0x0 0x200000>;
 			console-size = <0x200000>;
 			mem-type = <0>;
+			ecc-size = <16>;
 		};
 	};
 
