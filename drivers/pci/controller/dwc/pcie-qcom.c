@@ -300,6 +300,8 @@ struct qcom_pcie_cfg {
 	bool override_no_snoop;
 	bool firmware_managed;
 	bool no_l0s;
+	/* the controller loses power in system suspend: take the link to L2 */
+	bool suspend_poweroff;
 };
 
 struct qcom_pcie_perst {
@@ -1694,6 +1696,16 @@ static const struct qcom_pcie_cfg cfg_1_9_0 = {
 	.ops = &ops_1_9_0,
 };
 
+/*
+ * Kaanapali collapses CX in s2idle, which takes the controller's power and
+ * state with it: a link kept up through suspend is found down on resume and
+ * its endpoint stops responding.
+ */
+static const struct qcom_pcie_cfg cfg_kaanapali = {
+	.ops = &ops_1_9_0,
+	.suspend_poweroff = true,
+};
+
 static const struct qcom_pcie_cfg cfg_1_34_0 = {
 	.ops = &ops_1_9_0,
 	.override_no_snoop = true,
@@ -2375,6 +2387,7 @@ static int qcom_pcie_probe(struct platform_device *pdev)
 		goto err_pm_runtime_put;
 
 	pp->ops = &qcom_pcie_dw_ops;
+	pp->suspend_poweroff = pcie->cfg->suspend_poweroff;
 
 	ret = qcom_pcie_parse_ports(pcie);
 	if (ret) {
@@ -2586,6 +2599,7 @@ disable_icc_cpu:
 
 static const struct of_device_id qcom_pcie_match[] = {
 	{ .compatible = "qcom,hawi-pcie", .data = &cfg_1_9_0 },
+	{ .compatible = "qcom,kaanapali-pcie", .data = &cfg_kaanapali },
 	{ .compatible = "qcom,pcie-apq8064", .data = &cfg_2_1_0 },
 	{ .compatible = "qcom,pcie-apq8084", .data = &cfg_1_0_0 },
 	{ .compatible = "qcom,pcie-ipq4019", .data = &cfg_2_4_0 },
