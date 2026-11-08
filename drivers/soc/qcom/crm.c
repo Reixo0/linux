@@ -247,9 +247,9 @@ enum crm_client {
  * operations the CRM can perform.
  */
 enum crm_capability {
-	PERF_OL_VOTING_CAPABLE,
-	BW_VOTING_CAPABLE,
-	BW_PT_VOTING_CAPABLE,
+	PERF_OL_VOTING_CAPABLE = BIT(PERF_OL_VCD),
+	BW_VOTING_CAPABLE = BIT(BW_VOTE_VCD),
+	BW_PT_VOTING_CAPABLE = BIT(BW_PT_VOTE_VCD),
 };
 
 /**
