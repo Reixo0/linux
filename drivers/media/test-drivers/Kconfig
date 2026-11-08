@@ -20,6 +20,7 @@ source "drivers/media/test-drivers/vicodec/Kconfig"
 source "drivers/media/test-drivers/vimc/Kconfig"
 source "drivers/media/test-drivers/vivid/Kconfig"
 source "drivers/media/test-drivers/visl/Kconfig"
+source "drivers/media/test-drivers/v4l2loopback/Kconfig"
 
 endif #V4L_TEST_DRIVERS
 
