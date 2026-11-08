@@ -3157,7 +3157,8 @@ static struct gdsc gcc_pcie_0_phy_gdsc = {
 		.name = "gcc_pcie_0_phy_gdsc",
 	},
 	.pwrsts = PWRSTS_RET_ON,
-	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | VOTABLE,
+	/* Stays on while the ADSP holds the Wi-Fi link through suspend. */
+	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | VOTABLE | ACTIVE_WAKEUP,
 };
 
 static struct gdsc gcc_ufs_mem_phy_gdsc = {
