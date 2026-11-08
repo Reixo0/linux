@@ -67,6 +67,18 @@ source "drivers/nfc/microread/Kconfig"
 source "drivers/nfc/nfcmrvl/Kconfig"
 source "drivers/nfc/st21nfca/Kconfig"
 source "drivers/nfc/st-nci/Kconfig"
+
+config NFC_ST54L_I2C
+	tristate "STMicroelectronics ST54L NCI over I2C"
+	depends on NFC_NCI && I2C && GPIOLIB && COMMON_CLK
+	help
+	  This option enables the NFC controller of the ST54L (NFC and
+	  secure element), which speaks NCI 2.0 over I2C, as on the
+	  Nubia RedMagic 11 Pro. The secure element is not supported.
+
+	  Say Y here to compile support for it into the kernel or
+	  say M to compile it as a module. The module will be called
+	  st54l-i2c.ko.
 source "drivers/nfc/nxp-nci/Kconfig"
 source "drivers/nfc/s3fwrn5/Kconfig"
 source "drivers/nfc/st95hf/Kconfig"
