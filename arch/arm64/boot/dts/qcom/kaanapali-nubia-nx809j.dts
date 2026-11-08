@@ -1813,11 +1813,14 @@
 
 &pcie0 {
 	/*
-	 * The ADSP holds the Wi-Fi link through suspend. WAKE# belongs to the
-	 * controller, which arms it only while the Wi-Fi chip is armed for
-	 * wake: an unarmed chip is powered off in suspend and drags it low.
+	 * WAKE# belongs to the controller, which arms it only while the Wi-Fi
+	 * chip is armed for wake: an unarmed chip is powered off in suspend
+	 * and drags it low.
+	 *
+	 * No qcom,drv-supported: on Kaanapali the link is handed over to CESTA
+	 * (pcie_crm), not the ADSP. The ADSP acks the hand-off but doesn't
+	 * hold the link, and the phone resets once the Wi-Fi chip wakes it.
 	 */
-	qcom,drv-supported;
 	wake-gpios = <&tlmm 104 GPIO_ACTIVE_LOW>;
 
 	pinctrl-0 = <&pcie0_default_state>;
