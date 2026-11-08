@@ -1805,6 +1805,14 @@
 };
 
 &pcie0 {
+	/*
+	 * The ADSP holds the Wi-Fi link through suspend. WAKE# belongs to the
+	 * controller, which arms it only while the Wi-Fi chip is armed for
+	 * wake: an unarmed chip is powered off in suspend and drags it low.
+	 */
+	qcom,drv-supported;
+	wake-gpios = <&tlmm 104 GPIO_ACTIVE_LOW>;
+
 	pinctrl-0 = <&pcie0_default_state>;
 	pinctrl-names = "default";
 
@@ -1819,7 +1827,6 @@
 };
 
 &pcie_port0 {
-	wake-gpios = <&tlmm 104 GPIO_ACTIVE_LOW>;
 	reset-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
 
 	wifi@0 {
