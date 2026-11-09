@@ -44,6 +44,8 @@ struct msm_mdss {
 	struct icc_path *mdp_path[2];
 	u32 num_mdp_paths;
 	struct icc_path *reg_bus_path;
+	/* The core reset, waiting for msm_mdss_takeover(). */
+	struct reset_control *takeover_reset;
 };
 
 static int msm_mdss_parse_data_bus_icc_path(struct device *dev,
@@ -243,10 +245,31 @@ static void msm_mdss_6x_setup_ubwc(struct msm_mdss *msm_mdss)
 	 (((minor) & 0xfff) << 16) |	\
 	 ((step) & 0xffff))
 
+static void msm_mdss_setup_ubwc(struct msm_mdss *msm_mdss)
+{
+	u32 hw_rev;
+
+	/*
+	 * Register access requires MDSS_MDP_CLK, which is not enabled by the
+	 * mdss on mdp5 hardware. Skip it for now.
+	 */
+	if (msm_mdss->is_mdp5 || !msm_mdss->mdss_data)
+		return;
+
+	hw_rev = readl_relaxed(msm_mdss->mmio + REG_MDSS_HW_VERSION);
+
+	if (hw_rev >= MDSS_HW_VER(6, 0, 0))
+		msm_mdss_6x_setup_ubwc(msm_mdss);
+	else if (hw_rev >= MDSS_HW_VER(5, 0, 0))
+		msm_mdss_5x_setup_ubwc(msm_mdss);
+	else if (hw_rev >= MDSS_HW_VER(4, 0, 0))
+		msm_mdss_4x_setup_ubwc(msm_mdss);
+	/* else UBWC 1.0 or none, no params to program */
+}
+
 static int msm_mdss_enable(struct msm_mdss *msm_mdss)
 {
 	int ret, i;
-	u32 hw_rev;
 
 	/*
 	 * Several components have AXI clocks that can only be turned on if
@@ -273,22 +296,7 @@ static int msm_mdss_enable(struct msm_mdss *msm_mdss)
 		return ret;
 	}
 
-	/*
-	 * Register access requires MDSS_MDP_CLK, which is not enabled by the
-	 * mdss on mdp5 hardware. Skip it for now.
-	 */
-	if (msm_mdss->is_mdp5 || !msm_mdss->mdss_data)
-		return 0;
-
-	hw_rev = readl_relaxed(msm_mdss->mmio + REG_MDSS_HW_VERSION);
-
-	if (hw_rev >= MDSS_HW_VER(6, 0, 0))
-		msm_mdss_6x_setup_ubwc(msm_mdss);
-	else if (hw_rev >= MDSS_HW_VER(5, 0, 0))
-		msm_mdss_5x_setup_ubwc(msm_mdss);
-	else if (hw_rev >= MDSS_HW_VER(4, 0, 0))
-		msm_mdss_4x_setup_ubwc(msm_mdss);
-	/* else UBWC 1.0 or none, no params to program */
+	msm_mdss_setup_ubwc(msm_mdss);
 
 	return ret;
 }
@@ -381,16 +389,32 @@ static struct msm_mdss *msm_mdss_init(struct platform_device *pdev, bool is_mdp5
 {
 	const struct msm_mdss_data *mdss_data;
 	struct msm_mdss *msm_mdss;
+	/*
+	 * Kaanapali's command-mode panels show only the frames the MDSS sends
+	 * them: a reset here stopped the bootloader's scanout, and the panel
+	 * kept its last frame, the boot log, in the rescue too, which never
+	 * starts msm. The reset waits for msm to take the display over.
+	 */
+	bool late_reset = of_device_is_compatible(pdev->dev.of_node, "qcom,kaanapali-mdss");
 	int ret;
 	int irq;
 
-	ret = msm_mdss_reset(&pdev->dev);
-	if (ret)
-		return ERR_PTR(ret);
+	if (!late_reset) {
+		ret = msm_mdss_reset(&pdev->dev);
+		if (ret)
+			return ERR_PTR(ret);
+	}
 
 	msm_mdss = devm_kzalloc(&pdev->dev, sizeof(*msm_mdss), GFP_KERNEL);
 	if (!msm_mdss)
 		return ERR_PTR(-ENOMEM);
+
+	if (late_reset) {
+		msm_mdss->takeover_reset =
+			devm_reset_control_get_optional_exclusive(&pdev->dev, NULL);
+		if (IS_ERR(msm_mdss->takeover_reset))
+			return ERR_CAST(msm_mdss->takeover_reset);
+	}
 
 	msm_mdss->mdss_data = qcom_ubwc_config_get_data();
 	if (IS_ERR(msm_mdss->mdss_data))
@@ -584,6 +608,30 @@ static struct platform_driver mdss_platform_driver = {
 		.pm     = &mdss_pm_ops,
 	},
 };
+
+/*
+ * msm takes the display over from the boot framebuffer: the core reset that
+ * waited for it, then the UBWC setup the reset cleared. `dev` is the display
+ * controller, an MDSS child, powered.
+ */
+void msm_mdss_takeover(struct device *dev)
+{
+	struct msm_mdss *msm_mdss;
+
+	if (!dev->parent || dev->parent->driver != &mdss_platform_driver.driver)
+		return;
+	msm_mdss = dev_get_drvdata(dev->parent);
+	if (!msm_mdss->takeover_reset)
+		return;
+
+	reset_control_assert(msm_mdss->takeover_reset);
+	/* As msm_mdss_reset(): held about a frame. */
+	msleep(20);
+	reset_control_deassert(msm_mdss->takeover_reset);
+	msm_mdss->takeover_reset = NULL;
+
+	msm_mdss_setup_ubwc(msm_mdss);
+}
 
 void __init msm_mdss_register(void)
 {

@@ -421,10 +421,12 @@ static inline void msm_dpu_unregister(void) {}
 void msm_mdss_register(void);
 void msm_mdss_unregister(void);
 int msm_count_mdss(void);
+void msm_mdss_takeover(struct device *dev);
 #else
 static inline void msm_mdss_register(void) {}
 static inline void msm_mdss_unregister(void) {}
 static inline int msm_count_mdss(void) { return 0; }
+static inline void msm_mdss_takeover(struct device *dev) {}
 #endif
 
 #ifdef CONFIG_DEBUG_FS

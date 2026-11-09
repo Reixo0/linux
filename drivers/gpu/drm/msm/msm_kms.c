@@ -273,6 +273,8 @@ int msm_drm_kms_init(struct device *dev, const struct drm_driver *drv)
 	if (ret)
 		return ret;
 
+	msm_mdss_takeover(dev);
+
 	ret = msm_disp_snapshot_init(ddev);
 	if (ret) {
 		DRM_DEV_ERROR(dev, "msm_disp_snapshot_init failed ret = %d\n", ret);
