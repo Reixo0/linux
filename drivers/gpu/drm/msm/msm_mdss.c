@@ -628,6 +628,11 @@ void msm_mdss_takeover(struct device *dev)
 	/* As msm_mdss_reset(): held about a frame. */
 	msleep(20);
 	reset_control_deassert(msm_mdss->takeover_reset);
+	/*
+	 * Registers written right after the deassert are lost: the UBWC setup
+	 * below kept its reset values and scanout of compressed buffers broke.
+	 */
+	msleep(20);
 	msm_mdss->takeover_reset = NULL;
 
 	msm_mdss_setup_ubwc(msm_mdss);
