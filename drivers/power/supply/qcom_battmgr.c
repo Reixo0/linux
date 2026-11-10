@@ -278,7 +278,7 @@ struct qcom_battmgr_status {
 	int power_now;
 	unsigned int voltage_now;
 	unsigned int voltage_ocv;
-	unsigned int temperature;
+	int temperature;
 	unsigned int resistance;
 	unsigned int soh_percent;
 
@@ -631,6 +631,9 @@ static int qcom_battmgr_bat_get_property(struct power_supply *psy,
 		val->intval = battmgr->status.percent;
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
+		/* The firmware answers near absolute zero until it has measured */
+		if (battmgr->status.temperature < -2000)
+			return -ENODATA;
 		val->intval = battmgr->status.temperature;
 		break;
 	case POWER_SUPPLY_PROP_INTERNAL_RESISTANCE:
@@ -1267,7 +1270,7 @@ static unsigned int qcom_battmgr_sc8280xp_parse_technology(const char *chemistry
 	return POWER_SUPPLY_TECHNOLOGY_UNKNOWN;
 }
 
-static unsigned int qcom_battmgr_sc8280xp_convert_temp(unsigned int temperature)
+static int qcom_battmgr_sc8280xp_convert_temp(int temperature)
 {
 	return DIV_ROUND_CLOSEST(temperature, 10);
 }
@@ -1481,7 +1484,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 			break;
 		case BATT_TEMP:
 			val = le32_to_cpu(resp->intval.value);
-			battmgr->status.temperature = DIV_ROUND_CLOSEST(val, 10);
+			battmgr->status.temperature = DIV_ROUND_CLOSEST((int)val, 10);
 			break;
 		case BATT_TECHNOLOGY:
 			battmgr->info.technology = le32_to_cpu(resp->intval.value);
