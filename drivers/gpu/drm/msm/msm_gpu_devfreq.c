@@ -192,7 +192,11 @@ void msm_devfreq_init(struct msm_gpu *gpu)
 
 	devfreq_suspend_device(df->devfreq);
 
-	gpu->cooling = of_devfreq_cooling_register(gpu->pdev->dev.of_node, df->devfreq);
+	/*
+	 * With opp-microwatt in the GPU's OPP table the cooling device gets an
+	 * energy model, which lets the power allocator governor budget it.
+	 */
+	gpu->cooling = devfreq_cooling_em_register(df->devfreq, NULL);
 	if (IS_ERR(gpu->cooling)) {
 		DRM_DEV_ERROR(&gpu->pdev->dev,
 				"Couldn't register GPU cooling device\n");
