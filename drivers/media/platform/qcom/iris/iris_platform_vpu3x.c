@@ -260,7 +260,6 @@ const struct iris_platform_data kaanapali_data = {
 	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_kaanapali),
 	.cb_data = kaanapali_cb_data,
 	.cb_data_size = ARRAY_SIZE(kaanapali_cb_data),
-	.no_power_collapse = true,
 	.num_vpp_pipe = 2,
 	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
 	.icc_ib_multiplier = 1,

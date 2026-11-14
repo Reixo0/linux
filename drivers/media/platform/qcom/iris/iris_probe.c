@@ -452,16 +452,6 @@ static int __maybe_unused iris_pm_suspend(struct device *dev)
 	if (core->state != IRIS_CORE_INIT)
 		goto exit;
 
-	if (core->iris_platform_data->no_power_collapse) {
-		/*
-		 * The vendor firmware (vfw-4.0) only starts once per boot: after
-		 * a warm power collapse or a cold restart it dies in
-		 * venusCoreController.c, then on the first frame. Keep it on.
-		 */
-		ret = -EBUSY;
-		goto exit;
-	}
-
 	ret = iris_hfi_pm_suspend(core);
 
 exit:
