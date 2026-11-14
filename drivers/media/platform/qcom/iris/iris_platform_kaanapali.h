@@ -62,16 +62,17 @@ static struct tz_cp_config tz_cp_config_kaanapali[] = {
 	},
 };
 
+/*
+ * The vendor firmware (vfw-4.0) expects bitstream and non-pixel buffers in one
+ * address space, as in the vendor device tree, where SIDs 0x1940, 0x1a20 and
+ * 0x1944 share one context bank: with a separate bitstream bank it dies in
+ * venus_c2_parsing.c on the first frame.
+ */
 static struct iris_context_bank kaanapali_cb_data[] = {
-	{
-		.name = "iris_bitstream",
-		.f_id = IRIS_BITSTREAM,
-		.region_mask = BIT(IRIS_BITSTREAM_REGION),
-	},
 	{
 		.name = "iris_non_pixel",
 		.f_id = IRIS_NON_PIXEL,
-		.region_mask = BIT(IRIS_NON_PIXEL_REGION),
+		.region_mask = BIT(IRIS_BITSTREAM_REGION) | BIT(IRIS_NON_PIXEL_REGION),
 	},
 	{
 		.name = "iris_pixel",
