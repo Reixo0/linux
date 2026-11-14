@@ -280,6 +280,11 @@ static int iris_hfi_gen2_handle_system_error(struct iris_core *core,
 	if (pkt)
 		dev_err(core->dev, "received system error of type %#x\n", pkt->type);
 
+	/* the firmware writes its failure reason to the SFR */
+	if (core->sfr_vaddr)
+		dev_err(core->dev, "sfr: %.*s\n", (int)(SFR_SIZE - sizeof(u32)),
+			(char *)core->sfr_vaddr + sizeof(u32));
+
 	core->state = IRIS_CORE_ERROR;
 
 	mutex_lock(&core->lock);
