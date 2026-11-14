@@ -41,12 +41,71 @@ static int of_iommu_xlate(struct device *dev,
 	return ret;
 }
 
+/*
+ * A non-PCI device can be reached through several stream IDs for one input
+ * ID (one iommu-map entry each, e.g. a video codec's non-pixel context bank).
+ * of_map_id() returns only the first match, so walk the map and add every
+ * matching single-ID entry. Returns the number of entries added, or an error.
+ */
+static int of_iommu_configure_dev_id_multi(struct device_node *master_np,
+					   struct device *dev, u32 id)
+{
+	const __be32 *map;
+	u32 map_mask = 0xffffffff;
+	int map_len, offset = 0, found = 0, err;
+
+	map = of_get_property(master_np, "iommu-map", &map_len);
+	if (!map || map_len % sizeof(*map))
+		return 0;
+	map_len /= sizeof(*map);
+	of_property_read_u32(master_np, "iommu-map-mask", &map_mask);
+	id &= map_mask;
+
+	while (map_len - offset >= 4) {
+		struct of_phandle_args spec = {};
+		u32 id_base = be32_to_cpup(map + offset);
+		u32 cells = 1, id_len, i;
+
+		spec.np = of_find_node_by_phandle(be32_to_cpup(map + offset + 1));
+		if (!spec.np)
+			return -ENODEV;
+		of_property_read_u32(spec.np, "#iommu-cells", &cells);
+		if (cells > MAX_PHANDLE_ARGS || map_len - offset < 3 + cells) {
+			of_node_put(spec.np);
+			return -EINVAL;
+		}
+		id_len = be32_to_cpup(map + offset + 2 + cells);
+		if (id >= id_base && id - id_base < id_len) {
+			for (i = 0; i < cells; i++)
+				spec.args[i] = be32_to_cpup(map + offset + 2 + i);
+			spec.args[0] += id - id_base;
+			spec.args_count = cells;
+			err = of_iommu_xlate(dev, &spec);
+			if (err) {
+				of_node_put(spec.np);
+				return err;
+			}
+			found++;
+		}
+		of_node_put(spec.np);
+		offset += 3 + cells;
+	}
+
+	return found;
+}
+
 static int of_iommu_configure_dev_id(struct device_node *master_np,
 				     struct device *dev,
 				     const u32 *id)
 {
 	struct of_phandle_args iommu_spec = {};
 	int err;
+
+	if (!dev_is_pci(dev)) {
+		err = of_iommu_configure_dev_id_multi(master_np, dev, *id);
+		if (err)
+			return err < 0 ? err : 0;
+	}
 
 	err = of_map_iommu_id(master_np, *id, &iommu_spec);
 	if (err)
