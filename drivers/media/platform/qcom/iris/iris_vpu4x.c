@@ -119,12 +119,24 @@ static void iris_vpu4x_power_off_apv(struct iris_core *core)
 	if (!handshake_done && handshake_busy)
 		dev_err(core->dev, "LPI handshake timeout\n");
 
+	/*
+	 * Release the low power request again before resetting the NoC, as
+	 * Qualcomm's downstream driver does. The request lives in the always-on
+	 * wrapper: left set, it outlasts the power collapse and the firmware's
+	 * next start fails in its core controller.
+	 */
+	readl_poll_timeout(core->reg_base + AON_WRAPPER_MVP_NOC_LPI_STATUS,
+			   value, value & NOC_LPI_STATUS_DONE, 200, 2000);
+	writel(0x0, core->reg_base + AON_WRAPPER_MVP_NOC_LPI_CONTROL);
+
 	writel(0x080200, core->reg_base + AON_WRAPPER_MVP_NOC_RESET_REQ);
 	ret = readl_poll_timeout(core->reg_base + AON_WRAPPER_MVP_NOC_RESET_ACK,
 				 value, value & 0x080200, 200, 2000);
 	if (ret)
 		goto disable_clocks_and_power;
 
+	/* Pulse the NoC reset: writing 0 alone never resets it */
+	writel(0x080200, core->reg_base + AON_WRAPPER_MVP_NOC_RESET_SYNCRST);
 	writel(0x0, core->reg_base + AON_WRAPPER_MVP_NOC_RESET_SYNCRST);
 	writel(0x0, core->reg_base + AON_WRAPPER_MVP_NOC_RESET_REQ);
 	ret = readl_poll_timeout(core->reg_base + AON_WRAPPER_MVP_NOC_RESET_ACK,
@@ -316,12 +328,24 @@ static void iris_vpu4x_power_off_hardware(struct iris_core *core)
 	if (!handshake_done && handshake_busy)
 		dev_err(core->dev, "LPI handshake timeout\n");
 
+	/*
+	 * Release the low power request again before resetting the NoC, as
+	 * Qualcomm's downstream driver does. The request lives in the always-on
+	 * wrapper: left set, it outlasts the power collapse and the firmware's
+	 * next start fails in its core controller.
+	 */
+	readl_poll_timeout(core->reg_base + AON_WRAPPER_MVP_NOC_LPI_STATUS,
+			   value, value & NOC_LPI_STATUS_DONE, 200, 2000);
+	writel(0x0, core->reg_base + AON_WRAPPER_MVP_NOC_LPI_CONTROL);
+
 	writel(MVP_NOC_RESET_REQ_MASK, core->reg_base + AON_WRAPPER_MVP_NOC_RESET_REQ);
 	ret = readl_poll_timeout(core->reg_base + AON_WRAPPER_MVP_NOC_RESET_ACK,
 				 value, value & MVP_NOC_RESET_REQ_MASK, 200, 2000);
 	if (ret)
 		goto disable_clocks_and_power;
 
+	/* Pulse the NoC reset: writing 0 alone never resets it */
+	writel(MVP_NOC_RESET_REQ_MASK, core->reg_base + AON_WRAPPER_MVP_NOC_RESET_SYNCRST);
 	writel(0x0, core->reg_base + AON_WRAPPER_MVP_NOC_RESET_SYNCRST);
 	writel(0x0, core->reg_base + AON_WRAPPER_MVP_NOC_RESET_REQ);
 	ret = readl_poll_timeout(core->reg_base + AON_WRAPPER_MVP_NOC_RESET_ACK,
