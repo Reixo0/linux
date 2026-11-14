@@ -254,6 +254,42 @@ err_free_iova:
 	return ret;
 }
 
+/*
+ * The non-pixel stream cannot address the low IOVA range either when it has a
+ * context bank of its own: keep that range out of the bank's address space,
+ * as the main device's reservation does without context banks. Firmware,
+ * queues and (on kaanapali) bitstream buffers live there; a buffer below the
+ * boundary faults the SMMU.
+ */
+static int iris_reserve_cb_iova_region(struct iris_core *core)
+{
+	struct device *dev;
+
+	if (!core->iris_platform_data->cb_data_size)
+		return 0;
+
+	dev = iris_get_cb_dev(core, IRIS_NON_PIXEL_REGION);
+	if (!dev || !device_iommu_mapped(dev))
+		return 0;
+
+	return iris_reserve_iova_region(dev, &core->cb_iova_state,
+					IRIS_NP_RESERVE_IOVA_START,
+					IRIS_NP_RESERVE_IOVA_SIZE);
+}
+
+static void iris_unreserve_cb_iova_region(struct iris_core *core)
+{
+	struct device *dev;
+
+	if (!core->cb_iova_state)
+		return;
+
+	dev = iris_get_cb_dev(core, IRIS_NON_PIXEL_REGION);
+	if (dev)
+		iris_unreserve_iova_region(dev, core->cb_iova_state);
+	core->cb_iova_state = NULL;
+}
+
 static int iris_register_video_device(struct iris_core *core, enum domain_type type)
 {
 	struct video_device *vdev;
@@ -307,6 +343,7 @@ static void iris_remove(struct platform_device *pdev)
 	cancel_delayed_work_sync(&core->sys_error_handler);
 
 	iris_core_deinit(core);
+	iris_unreserve_cb_iova_region(core);
 	iris_deinit_context_bank_devices(core);
 
 	video_unregister_device(core->vdev_dec);
@@ -380,7 +417,8 @@ static int iris_probe(struct platform_device *pdev)
 
 	/*
 	 * Platforms with context bank devices give each region its own address
-	 * space, so the main device has no IOMMU and nothing to reserve.
+	 * space, so the main device has no IOMMU: the reservation goes on the
+	 * non-pixel context bank once it exists (iris_reserve_cb_iova_region()).
 	 */
 	if (!core->iris_platform_data->cb_data_size) {
 		ret = iris_reserve_iova_region(dev, &core->iova_state,
@@ -408,6 +446,10 @@ static int iris_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_vdev_unreg_enc;
 
+	ret = iris_reserve_cb_iova_region(core);
+	if (ret)
+		goto err_deinit_cb;
+
 	dma_mask = core->iris_platform_data->dma_mask;
 
 	if (device_iommu_mapped(core->dev)) {
@@ -428,6 +470,7 @@ static int iris_probe(struct platform_device *pdev)
 	return 0;
 
 err_deinit_cb:
+	iris_unreserve_cb_iova_region(core);
 	iris_deinit_context_bank_devices(core);
 err_vdev_unreg_enc:
 	video_unregister_device(core->vdev_enc);

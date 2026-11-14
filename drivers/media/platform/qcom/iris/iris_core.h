@@ -83,6 +83,7 @@ struct qcom_ubwc_cfg_data;
  * @inst_fw_caps_dec: an array of supported instance capabilities by decoder
  * @inst_fw_caps_enc: an array of supported instance capabilities by encoder
  * @iova_state: a pointer to an array of dma_iova_state entries reserved for restricted IOVA region
+ * @cb_iova_state: the same, reserved on the non-pixel context bank device
  */
 
 struct iris_core {
@@ -131,6 +132,7 @@ struct iris_core {
 	struct platform_inst_fw_cap		inst_fw_caps_dec[INST_FW_CAP_MAX];
 	struct platform_inst_fw_cap		inst_fw_caps_enc[INST_FW_CAP_MAX];
 	struct dma_iova_state			*iova_state;
+	struct dma_iova_state			*cb_iova_state;
 };
 
 int iris_core_init(struct iris_core *core);
