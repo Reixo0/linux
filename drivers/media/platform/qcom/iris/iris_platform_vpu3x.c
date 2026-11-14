@@ -261,6 +261,7 @@ const struct iris_platform_data kaanapali_data = {
 	.cb_data = kaanapali_cb_data,
 	.cb_data_size = ARRAY_SIZE(kaanapali_cb_data),
 	.num_vpp_pipe = 2,
+	.hier_b_frames_only = true,
 	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
 	.icc_ib_multiplier = 1,
 	.max_session_count = 16,
