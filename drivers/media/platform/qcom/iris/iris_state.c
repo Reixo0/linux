@@ -53,8 +53,13 @@ int iris_inst_change_state(struct iris_inst *inst,
 	if (inst->state == request_state)
 		return 0;
 
-	if (request_state == IRIS_INST_ERROR)
+	if (request_state == IRIS_INST_ERROR) {
+		/* most paths into the error state log nothing else */
+		dev_err(inst->core->dev, "session %#x failed in state %#x sub %#x from %pS\n",
+			inst->session_id, inst->state, inst->sub_state,
+			__builtin_return_address(0));
 		goto change_state;
+	}
 
 	if (!iris_allow_inst_state_change(inst, request_state))
 		return -EINVAL;
@@ -179,14 +184,22 @@ int iris_inst_sub_state_change_drc(struct iris_inst *inst)
 {
 	enum iris_inst_sub_state set_sub_state = 0;
 
+	/*
+	 * A second source change before the client finished handling the
+	 * first one (two quick seeks): the newer settings replace the older
+	 * ones and the client gets another event.
+	 */
 	if (inst->sub_state & IRIS_INST_SUB_DRC)
-		return -EINVAL;
+		return iris_inst_change_sub_state(inst, IRIS_INST_SUB_DRC_LAST,
+						  IRIS_INST_SUB_INPUT_PAUSE);
 
 	if (inst->state == IRIS_INST_INPUT_STREAMING ||
 	    inst->state == IRIS_INST_INIT)
 		set_sub_state = IRIS_INST_SUB_FIRST_IPSC | IRIS_INST_SUB_INPUT_PAUSE;
 	else
 		set_sub_state = IRIS_INST_SUB_DRC | IRIS_INST_SUB_INPUT_PAUSE;
+
+	reinit_completion(&inst->drc_last_completion);
 
 	return iris_inst_change_sub_state(inst, 0, set_sub_state);
 }
@@ -209,12 +222,19 @@ int iris_inst_sub_state_change_drain_last(struct iris_inst *inst)
 int iris_inst_sub_state_change_drc_last(struct iris_inst *inst)
 {
 	enum iris_inst_sub_state set_sub_state;
+	int ret;
 
 	if (inst->sub_state & IRIS_INST_SUB_DRC_LAST)
 		return -EINVAL;
 
-	if (!(inst->sub_state & IRIS_INST_SUB_DRC) ||
-	    !(inst->sub_state & IRIS_INST_SUB_INPUT_PAUSE))
+	/*
+	 * The client already restarted the capture queue without waiting
+	 * for the last buffer, which ended the change: a late flag is stale.
+	 */
+	if (!(inst->sub_state & IRIS_INST_SUB_DRC))
+		return 0;
+
+	if (!(inst->sub_state & IRIS_INST_SUB_INPUT_PAUSE))
 		return -EINVAL;
 
 	if (inst->sub_state & IRIS_INST_SUB_FIRST_IPSC)
@@ -222,7 +242,10 @@ int iris_inst_sub_state_change_drc_last(struct iris_inst *inst)
 
 	set_sub_state = IRIS_INST_SUB_DRC_LAST | IRIS_INST_SUB_OUTPUT_PAUSE;
 
-	return iris_inst_change_sub_state(inst, 0, set_sub_state);
+	ret = iris_inst_change_sub_state(inst, 0, set_sub_state);
+	complete(&inst->drc_last_completion);
+
+	return ret;
 }
 
 int iris_inst_sub_state_change_pause(struct iris_inst *inst, u32 plane)

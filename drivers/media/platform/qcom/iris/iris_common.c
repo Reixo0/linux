@@ -10,6 +10,8 @@
 #include "iris_instance.h"
 #include "iris_power.h"
 
+#define IRIS_DRC_LAST_WAIT_MS	200
+
 int iris_vb2_buffer_to_driver(struct vb2_buffer *vb2, struct iris_buffer *buf)
 {
 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb2);
@@ -102,8 +104,13 @@ int iris_process_streamon_output(struct iris_inst *inst)
 	drain_active = inst->sub_state & IRIS_INST_SUB_DRAIN &&
 		inst->sub_state & IRIS_INST_SUB_DRAIN_LAST;
 
-	drc_active = inst->sub_state & IRIS_INST_SUB_DRC &&
-		inst->sub_state & IRIS_INST_SUB_DRC_LAST;
+	/*
+	 * Clients may restart the capture queue after a source change without
+	 * first dequeuing the last buffer (Codec2's V4L2 decoder does after a
+	 * seek). That still ends the change; left set, the next source change
+	 * would fail the session.
+	 */
+	drc_active = inst->sub_state & IRIS_INST_SUB_DRC;
 
 	if (drc_active)
 		clear_sub_state = IRIS_INST_SUB_DRC | IRIS_INST_SUB_DRC_LAST;
@@ -213,6 +220,24 @@ int iris_session_streamoff(struct iris_inst *inst, u32 plane)
 		break;
 	default:
 		return -EINVAL;
+	}
+
+	/*
+	 * Codec2's V4L2 decoder restarts the capture queue as soon as it sees
+	 * a source change, without waiting for the last buffer. Stopping the
+	 * capture port before the firmware sent that buffer leaves the
+	 * firmware stuck in the change: input is never consumed again. Give
+	 * it a moment to finish, as it does within a millisecond normally.
+	 */
+	if (buffer_type == BUF_OUTPUT && inst->state == IRIS_INST_STREAMING &&
+	    inst->sub_state & IRIS_INST_SUB_DRC &&
+	    !(inst->sub_state & IRIS_INST_SUB_DRC_LAST)) {
+		mutex_unlock(&inst->lock);
+		ret = wait_for_completion_timeout(&inst->drc_last_completion,
+						  msecs_to_jiffies(IRIS_DRC_LAST_WAIT_MS));
+		mutex_lock(&inst->lock);
+		dev_dbg(inst->core->dev, "session %#x: drc last buffer %s before capture stop\n",
+			inst->session_id, ret ? "arrived" : "did not arrive");
 	}
 
 	ret = hfi_ops->session_stop(inst, plane);

@@ -38,6 +38,7 @@ struct iris_hfi_session_ops;
  * @compose: structure of compose info
  * @completion: structure of signal completions
  * @flush_completion: structure of signal completions for flush cmd
+ * @drc_last_completion: signalled when the last buffer of a source change arrives
  * @flush_responses_pending: counter to track number of pending flush responses
  * @fw_caps: array of supported instance firmware capabilities
  * @buffers: array of different iris buffers
@@ -86,6 +87,7 @@ struct iris_inst {
 	struct iris_hfi_rect_desc	compose;
 	struct completion		completion;
 	struct completion		flush_completion;
+	struct completion		drc_last_completion;
 	u32				flush_responses_pending;
 	struct platform_inst_fw_cap	fw_caps[INST_FW_CAP_MAX];
 	struct iris_buffers		buffers[BUF_TYPE_MAX];

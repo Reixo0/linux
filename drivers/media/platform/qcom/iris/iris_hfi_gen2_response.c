@@ -336,11 +336,17 @@ static int iris_hfi_gen2_handle_input_buffer(struct iris_inst *inst,
 			break;
 		}
 	}
-	if (!found)
-		return -EINVAL;
-
-	if (!(buf->attr & BUF_ATTR_QUEUED))
-		return -EINVAL;
+	/*
+	 * The firmware can return a buffer that a stream-off or a resolution
+	 * change already took back. Failing here kills the whole session.
+	 */
+	if (!found || !(buf->attr & BUF_ATTR_QUEUED)) {
+		dev_warn_ratelimited(inst->core->dev,
+				     "session %#x: ignoring stale input buffer %u (%s)\n",
+				     inst->session_id, buffer->index,
+				     found ? "not queued" : "unknown");
+		return 0;
+	}
 
 	buf->attr &= ~BUF_ATTR_QUEUED;
 	buf->attr |= BUF_ATTR_DEQUEUED;
@@ -378,11 +384,15 @@ static int iris_hfi_gen2_handle_output_buffer(struct iris_inst *inst,
 			break;
 		}
 	}
-	if (!found)
-		return -EINVAL;
-
-	if (!(buf->attr & BUF_ATTR_QUEUED))
-		return -EINVAL;
+	/* as for input: a returned buffer the client already took back */
+	if (!found || !(buf->attr & BUF_ATTR_QUEUED)) {
+		dev_warn_ratelimited(inst->core->dev,
+				     "session %#x: ignoring stale output buffer %u addr %#llx flags %#x (%s)\n",
+				     inst->session_id, hfi_buffer->index,
+				     hfi_buffer->base_address, hfi_buffer->flags,
+				     found ? "not queued" : "unknown");
+		return 0;
+	}
 
 	buf->data_offset = hfi_buffer->data_offset;
 	buf->data_size = hfi_buffer->data_size;
@@ -961,8 +971,13 @@ static int iris_hfi_gen2_handle_session_response(struct iris_core *core,
 			if (packet->type > range[i].begin && packet->type < range[i].end) {
 				dequeue |= (packet->type == HFI_CMD_BUFFER);
 				ret = range[i].handle(inst, packet);
-				if (ret)
+				if (ret) {
+					dev_err(inst->core->dev,
+						"session %#x: packet %#x port %#x flags %#x failed: %d\n",
+						inst->session_id, packet->type, packet->port,
+						packet->flags, ret);
 					iris_inst_change_state(inst, IRIS_INST_ERROR);
+				}
 			}
 			pkt += packet->size;
 		}

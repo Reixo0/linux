@@ -78,6 +78,9 @@ int iris_wait_for_session_response(struct iris_inst *inst, bool is_flush)
 	ret = wait_for_completion_timeout(done, msecs_to_jiffies(HW_RESPONSE_TIMEOUT_VALUE));
 	mutex_lock(&inst->lock);
 	if (!ret) {
+		dev_err(inst->core->dev, "session %#x: no %sresponse within %u ms (%pS)\n",
+			inst->session_id, is_flush ? "flush " : "",
+			HW_RESPONSE_TIMEOUT_VALUE, __builtin_return_address(0));
 		iris_inst_change_state(inst, IRIS_INST_ERROR);
 		return -ETIMEDOUT;
 	}
