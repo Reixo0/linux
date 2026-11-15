@@ -97,12 +97,15 @@ void pm_vt_switch_unregister(struct device *dev)
 EXPORT_SYMBOL(pm_vt_switch_unregister);
 
 /*
- * There are three cases when a VT switch on suspend/resume are required:
+ * There are two cases when a VT switch on suspend/resume is required:
  *   1) no driver has indicated a requirement one way or another, so preserve
  *      the old behavior
- *   2) console suspend is disabled, we want to see debug messages across
- *      suspend/resume
- *   3) any registered driver indicates it needs a VT switch
+ *   2) any registered driver indicates it needs a VT switch
+ *
+ * Console suspend being disabled (no_console_suspend) no longer forces one:
+ * the messages still reach every console, pstore's included, and on a phone
+ * the switch left the text console on the panel at resume instead of the
+ * compositor's (switched-off) screen.
  *
  * If none of these conditions is present, meaning we have at least one driver
  * that doesn't need the switch, and none that do, we can avoid it to make
@@ -116,9 +119,6 @@ static bool pm_vt_switch(void)
 
 	mutex_lock(&vt_switch_mutex);
 	if (list_empty(&pm_vt_switch_list))
-		goto out;
-
-	if (!console_suspend_enabled)
 		goto out;
 
 	list_for_each_entry(entry, &pm_vt_switch_list, head) {
