@@ -2465,14 +2465,16 @@
 
 /*
  * Fan and liquid cooling pump follow the prime core and GPU sensors. The fan
- * starts at 40 C and goes up one level every 2 C to full speed at 80 C; each
- * level holds until 2 C below its trip. The pump runs at the vendor's high
- * level from 70 C until the sensors fall below 65 C.
+ * starts at 50 C and goes up one level every 1.5 C to full speed at 80 C;
+ * each level holds until 1.5 C below its trip. Idle cores sit near 40 C, where
+ * the lowest level alone cost ~140 mW of a 1.5 W screen-on idle. The pump
+ * runs at the vendor's high level from 70 C until the sensors fall below
+ * 65 C.
  */
 #define FAN_TRIP(zone, n, temp)						\
 	zone##_fan##n: fan##n {						\
 		temperature = <temp>;					\
-		hysteresis = <2000>;					\
+		hysteresis = <1500>;					\
 		type = "active";					\
 	};
 
@@ -2483,26 +2485,26 @@
 	};
 
 #define FAN_TRIPS(zone)							\
-	FAN_TRIP(zone, 1, 40000)					\
-	FAN_TRIP(zone, 2, 42000)					\
-	FAN_TRIP(zone, 3, 44000)					\
-	FAN_TRIP(zone, 4, 46000)					\
-	FAN_TRIP(zone, 5, 48000)					\
-	FAN_TRIP(zone, 6, 50000)					\
-	FAN_TRIP(zone, 7, 52000)					\
-	FAN_TRIP(zone, 8, 54000)					\
-	FAN_TRIP(zone, 9, 56000)					\
-	FAN_TRIP(zone, 10, 58000)					\
-	FAN_TRIP(zone, 11, 60000)					\
-	FAN_TRIP(zone, 12, 62000)					\
-	FAN_TRIP(zone, 13, 64000)					\
-	FAN_TRIP(zone, 14, 66000)					\
-	FAN_TRIP(zone, 15, 68000)					\
-	FAN_TRIP(zone, 16, 70000)					\
-	FAN_TRIP(zone, 17, 72000)					\
-	FAN_TRIP(zone, 18, 74000)					\
-	FAN_TRIP(zone, 19, 76000)					\
-	FAN_TRIP(zone, 20, 78000)					\
+	FAN_TRIP(zone, 1, 50000)					\
+	FAN_TRIP(zone, 2, 51500)					\
+	FAN_TRIP(zone, 3, 53000)					\
+	FAN_TRIP(zone, 4, 54500)					\
+	FAN_TRIP(zone, 5, 56000)					\
+	FAN_TRIP(zone, 6, 57500)					\
+	FAN_TRIP(zone, 7, 59000)					\
+	FAN_TRIP(zone, 8, 60500)					\
+	FAN_TRIP(zone, 9, 62000)					\
+	FAN_TRIP(zone, 10, 63500)					\
+	FAN_TRIP(zone, 11, 65000)					\
+	FAN_TRIP(zone, 12, 66500)					\
+	FAN_TRIP(zone, 13, 68000)					\
+	FAN_TRIP(zone, 14, 69500)					\
+	FAN_TRIP(zone, 15, 71000)					\
+	FAN_TRIP(zone, 16, 72500)					\
+	FAN_TRIP(zone, 17, 74000)					\
+	FAN_TRIP(zone, 18, 75500)					\
+	FAN_TRIP(zone, 19, 77000)					\
+	FAN_TRIP(zone, 20, 78500)					\
 	FAN_TRIP(zone, 21, 80000)
 
 #define FAN_MAPS(zone)							\
