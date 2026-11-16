@@ -148,6 +148,18 @@ struct drm_panel_funcs {
 	 * Allows panels to create panels-specific debugfs files.
 	 */
 	void (*debugfs_init)(struct drm_panel *panel, struct dentry *root);
+
+	/**
+	 * @switch_mode:
+	 *
+	 * Moves a lit panel to another of its modes without a modeset. Display
+	 * drivers call it only when the new mode differs from the current one
+	 * in its refresh rate alone and their link timing stays the same.
+	 *
+	 * This function is optional.
+	 */
+	int (*switch_mode)(struct drm_panel *panel,
+			   const struct drm_display_mode *mode);
 };
 
 struct drm_panel_follower_funcs {
@@ -418,10 +430,24 @@ struct drm_bridge *devm_drm_panel_bridge_add_typed(struct device *dev,
 struct drm_bridge *drmm_panel_bridge_add(struct drm_device *drm,
 					 struct drm_panel *panel);
 struct drm_connector *drm_panel_bridge_connector(struct drm_bridge *bridge);
+bool drm_panel_bridge_can_switch_mode(struct drm_bridge *bridge);
+int drm_panel_bridge_switch_mode(struct drm_bridge *bridge,
+				 const struct drm_display_mode *mode);
 #else
 static inline bool drm_bridge_is_panel(const struct drm_bridge *bridge)
 {
 	return false;
+}
+
+static inline bool drm_panel_bridge_can_switch_mode(struct drm_bridge *bridge)
+{
+	return false;
+}
+
+static inline int drm_panel_bridge_switch_mode(struct drm_bridge *bridge,
+					       const struct drm_display_mode *mode)
+{
+	return -EOPNOTSUPP;
 }
 
 static inline int drm_panel_bridge_set_orientation(struct drm_connector *connector,

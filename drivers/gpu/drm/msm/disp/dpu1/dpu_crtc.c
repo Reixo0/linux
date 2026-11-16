@@ -1519,6 +1519,30 @@ int dpu_crtc_check_mode_changed(struct drm_crtc_state *old_crtc_state,
 	return 0;
 }
 
+/*
+ * A new refresh rate on a lit command mode panel that switches rates by
+ * itself needs no modeset: the encoder applies it at the next kickoff.
+ */
+static bool dpu_crtc_can_switch_mode(struct drm_crtc *crtc,
+				     const struct drm_crtc_state *old_state,
+				     const struct drm_crtc_state *new_state)
+{
+	struct drm_encoder *encoder;
+
+	if (!old_state->enable || !old_state->active || !new_state->active ||
+	    new_state->active_changed || new_state->connectors_changed ||
+	    !new_state->encoder_mask ||
+	    old_state->encoder_mask != new_state->encoder_mask)
+		return false;
+
+	drm_for_each_encoder_mask(encoder, crtc->dev, new_state->encoder_mask)
+		if (!dpu_encoder_can_switch_mode(encoder, &old_state->adjusted_mode,
+						 &new_state->adjusted_mode))
+			return false;
+
+	return true;
+}
+
 static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
 		struct drm_atomic_commit *state)
 {
@@ -1533,6 +1557,11 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
 	int rc = 0;
 
 	bool needs_dirtyfb = dpu_crtc_needs_dirtyfb(crtc_state);
+
+	if (crtc_state->mode_changed &&
+	    dpu_crtc_can_switch_mode(crtc, drm_atomic_get_old_crtc_state(state, crtc),
+				     crtc_state))
+		crtc_state->mode_changed = false;
 
 	/* don't reallocate resources if only ACTIVE has beeen changed */
 	if (crtc_state->mode_changed || crtc_state->connectors_changed ||

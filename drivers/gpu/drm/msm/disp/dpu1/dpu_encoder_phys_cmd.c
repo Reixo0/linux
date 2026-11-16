@@ -728,6 +728,7 @@ static void dpu_encoder_phys_cmd_init_ops(
 	ops->irq_enable = dpu_encoder_phys_cmd_irq_enable;
 	ops->irq_disable = dpu_encoder_phys_cmd_irq_disable;
 	ops->restore = dpu_encoder_phys_cmd_enable_helper;
+	ops->update_mode = dpu_encoder_phys_cmd_tearcheck_config;
 	ops->prepare_idle_pc = dpu_encoder_phys_cmd_prepare_idle_pc;
 	ops->handle_post_kickoff = dpu_encoder_phys_cmd_handle_post_kickoff;
 	ops->get_line_count = dpu_encoder_phys_cmd_get_line_count;

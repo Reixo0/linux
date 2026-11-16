@@ -245,6 +245,43 @@ bool drm_bridge_is_panel(const struct drm_bridge *bridge)
 EXPORT_SYMBOL(drm_bridge_is_panel);
 
 /**
+ * drm_panel_bridge_can_switch_mode - Checks if a bridge is a panel that
+ * changes its refresh rate without a modeset.
+ *
+ * @bridge: The drm_bridge to be checked.
+ */
+bool drm_panel_bridge_can_switch_mode(struct drm_bridge *bridge)
+{
+	struct drm_panel *panel;
+
+	if (!drm_bridge_is_panel(bridge))
+		return false;
+
+	panel = drm_bridge_to_panel(bridge);
+	return panel->funcs && panel->funcs->switch_mode;
+}
+EXPORT_SYMBOL(drm_panel_bridge_can_switch_mode);
+
+/**
+ * drm_panel_bridge_switch_mode - Moves a lit panel to another refresh rate.
+ *
+ * @bridge: A panel bridge for which drm_panel_bridge_can_switch_mode() holds.
+ * @mode: The new mode, differing from the current one in its refresh rate.
+ */
+int drm_panel_bridge_switch_mode(struct drm_bridge *bridge,
+				 const struct drm_display_mode *mode)
+{
+	struct drm_panel *panel;
+
+	if (!drm_panel_bridge_can_switch_mode(bridge))
+		return -EOPNOTSUPP;
+
+	panel = drm_bridge_to_panel(bridge);
+	return panel->funcs->switch_mode(panel, mode);
+}
+EXPORT_SYMBOL(drm_panel_bridge_switch_mode);
+
+/**
  * drm_panel_bridge_add - Creates a &drm_bridge and &drm_connector that
  * just calls the appropriate functions from &drm_panel.
  *

@@ -91,6 +91,8 @@ struct rm692h5 {
 	/* Lit (between enable and disable), and in DCS idle mode. */
 	bool enabled, idle;
 	ktime_t wake;
+	/* A rate switch and a brightness change both talk to the lit panel. */
+	struct mutex cmd_lock;
 };
 
 /* The one panel, for the ambient parameter. */
@@ -197,19 +199,23 @@ static void rm692h5_reset(struct rm692h5 *ctx)
 /*
  * Refresh rates of the downstream timings. In command mode the panel paces
  * itself: the porches only size the DSI link, and each rate has its own
- * register set (the downstream timing switch commands).
+ * register set (the downstream timing switch commands). Every rate keeps
+ * the 144 Hz link (pixel clock and line length); a lower rate only has a
+ * longer vertical front porch. A rate change then keeps the DSI timing, and
+ * the panel switches between frames, without a modeset or a blank.
  */
-#define RM692H5_MODE(_fps, _hfp, _hbp) {				\
-	.clock = (1216 + (_hfp) + 8 + (_hbp)) * (2688 + 56 + 8 + 8) *	\
-		 (_fps) / 1000,						\
+#define RM692H5_HTOTAL	(1216 + 8 + 8 + 12)
+#define RM692H5_LINES	((2688 + 56 + 8 + 8) * 144)
+#define RM692H5_MODE(_fps) {						\
+	.clock = RM692H5_HTOTAL * RM692H5_LINES / 1000,			\
 	.hdisplay = 1216,						\
-	.hsync_start = 1216 + (_hfp),					\
-	.hsync_end = 1216 + (_hfp) + 8,					\
-	.htotal = 1216 + (_hfp) + 8 + (_hbp),				\
+	.hsync_start = 1216 + 8,					\
+	.hsync_end = 1216 + 8 + 8,					\
+	.htotal = RM692H5_HTOTAL,					\
 	.vdisplay = 2688,						\
-	.vsync_start = 2688 + 56,					\
-	.vsync_end = 2688 + 56 + 8,					\
-	.vtotal = 2688 + 56 + 8 + 8,					\
+	.vsync_start = RM692H5_LINES / (_fps) - 8 - 8,			\
+	.vsync_end = RM692H5_LINES / (_fps) - 8,			\
+	.vtotal = RM692H5_LINES / (_fps),				\
 	.width_mm = 72,							\
 	.height_mm = 158,						\
 	.type = DRM_MODE_TYPE_DRIVER,					\
@@ -343,36 +349,43 @@ struct rm692h5_rate {
 	unsigned int num_regs;
 };
 
-#define RM692H5_RATE(_fps, _hfp, _hbp) {				\
-	.mode = RM692H5_MODE(_fps, _hfp, _hbp),				\
+#define RM692H5_RATE(_fps) {						\
+	.mode = RM692H5_MODE(_fps),					\
 	.regs = rm692h5_##_fps##hz,					\
 	.num_regs = ARRAY_SIZE(rm692h5_##_fps##hz),			\
 }
 
 /* The first one is the preferred mode */
 static const struct rm692h5_rate rm692h5_rates[] = {
-	RM692H5_RATE(60, 248, 272),
-	RM692H5_RATE(90, 108, 128),
-	RM692H5_RATE(120, 32, 60),
-	RM692H5_RATE(144, 8, 12),
+	RM692H5_RATE(60),
+	RM692H5_RATE(90),
+	RM692H5_RATE(120),
+	RM692H5_RATE(144),
 };
 
-static const struct rm692h5_rate *rm692h5_get_rate(struct rm692h5 *ctx)
+static const struct rm692h5_rate *
+rm692h5_find_rate(const struct drm_display_mode *mode)
 {
-	struct drm_connector *connector = ctx->connector;
-	const struct drm_display_mode *mode;
 	unsigned int i;
 
-	if (!connector || !connector->state || !connector->state->crtc)
-		return &rm692h5_rates[0];
-
-	mode = &connector->state->crtc->state->mode;
 	for (i = 0; i < ARRAY_SIZE(rm692h5_rates); i++)
 		if (drm_mode_match(mode, &rm692h5_rates[i].mode,
 				   DRM_MODE_MATCH_TIMINGS | DRM_MODE_MATCH_CLOCK))
 			return &rm692h5_rates[i];
 
-	return &rm692h5_rates[0];
+	return NULL;
+}
+
+static const struct rm692h5_rate *rm692h5_get_rate(struct rm692h5 *ctx)
+{
+	struct drm_connector *connector = ctx->connector;
+	const struct rm692h5_rate *rate;
+
+	if (!connector || !connector->state || !connector->state->crtc)
+		return &rm692h5_rates[0];
+
+	rate = rm692h5_find_rate(&connector->state->crtc->state->mode);
+	return rate ?: &rm692h5_rates[0];
 }
 
 static void rm692h5_send_rate(struct mipi_dsi_multi_context *dsi_ctx,
@@ -746,6 +759,37 @@ static int rm692h5_unprepare(struct drm_panel *panel)
 	return 0;
 }
 
+/* A new rate on the lit panel, between two frames. */
+static int rm692h5_switch_mode(struct drm_panel *panel,
+			       const struct drm_display_mode *mode)
+{
+	struct rm692h5 *ctx = to_rm692h5(panel);
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+	const struct rm692h5_rate *rate = rm692h5_find_rate(mode);
+	unsigned long flags = ctx->dsi->mode_flags;
+	ktime_t start = ktime_get();
+
+	if (!rate)
+		return -EINVAL;
+	/* Not lit: prepare sends the rate of the mode at the next wake. */
+	if (!ctx->enabled || rate == ctx->rate)
+		return 0;
+
+	mutex_lock(&ctx->cmd_lock);
+	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+	rm692h5_send_rate(&dsi_ctx, rate);
+	ctx->dsi->mode_flags = flags;
+	mutex_unlock(&ctx->cmd_lock);
+	if (dsi_ctx.accum_err)
+		return dsi_ctx.accum_err;
+
+	dev_dbg(&ctx->dsi->dev, "%d Hz in %lld us\n", drm_mode_vrefresh(mode),
+		ktime_us_delta(ktime_get(), start));
+	ctx->rate = rate;
+
+	return 0;
+}
+
 static int rm692h5_get_modes(struct drm_panel *panel,
 			     struct drm_connector *connector)
 {
@@ -778,6 +822,7 @@ static const struct drm_panel_funcs rm692h5_panel_funcs = {
 	.disable = rm692h5_disable,
 	.unprepare = rm692h5_unprepare,
 	.get_modes = rm692h5_get_modes,
+	.switch_mode = rm692h5_switch_mode,
 };
 
 static int rm692h5_bl_update_status(struct backlight_device *bl)
@@ -798,15 +843,13 @@ static int rm692h5_bl_update_status(struct backlight_device *bl)
 	    (READ_ONCE(ambient) && backlight_is_blank(bl)))
 		return 0;
 
+	mutex_lock(&ctx->cmd_lock);
 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
-
 	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
-	if (ret < 0)
-		return ret;
-
 	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+	mutex_unlock(&ctx->cmd_lock);
 
-	return 0;
+	return ret < 0 ? ret : 0;
 }
 
 static const struct backlight_ops rm692h5_bl_ops = {
@@ -836,6 +879,10 @@ static int rm692h5_probe(struct mipi_dsi_device *dsi)
 				   &rm692h5_panel_funcs, DRM_MODE_CONNECTOR_DSI);
 	if (IS_ERR(ctx))
 		return PTR_ERR(ctx);
+
+	ret = devm_mutex_init(dev, &ctx->cmd_lock);
+	if (ret)
+		return ret;
 
 	for (i = 0; i < ARRAY_SIZE(ctx->supplies); i++)
 		ctx->supplies[i].supply = rm692h5_supply_names[i];

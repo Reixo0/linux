@@ -13,6 +13,8 @@
 #include <linux/seq_file.h>
 
 #include <drm/drm_atomic.h>
+#include <drm/drm_bridge.h>
+#include <drm/drm_panel.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_file.h>
 #include <drm/drm_probe_helper.h>
@@ -749,6 +751,78 @@ bool dpu_encoder_needs_modeset(struct drm_encoder *drm_enc, struct drm_atomic_co
 	}
 
 	return false;
+}
+
+/*
+ * A command mode DSI panel paces itself: a mode with the same size, line
+ * length and pixel clock keeps the link timing, so only the panel's frame
+ * rate and the tear check change, and no modeset is needed.
+ */
+static bool dpu_encoder_panel_switches_mode(struct drm_encoder *drm_enc)
+{
+	struct dpu_encoder_virt *dpu_enc = to_dpu_encoder_virt(drm_enc);
+	struct drm_bridge *bridge;
+	bool ret;
+
+	if (dpu_enc->disp_info.intf_type != INTF_DSI ||
+	    !dpu_enc->disp_info.is_cmd_mode)
+		return false;
+
+	bridge = drm_bridge_chain_get_last_bridge(drm_enc);
+	ret = bridge && drm_panel_bridge_can_switch_mode(bridge);
+	drm_bridge_put(bridge);
+
+	return ret;
+}
+
+bool dpu_encoder_can_switch_mode(struct drm_encoder *drm_enc,
+				 const struct drm_display_mode *old,
+				 const struct drm_display_mode *new)
+{
+	if (old->hdisplay != new->hdisplay ||
+	    old->hsync_start != new->hsync_start ||
+	    old->hsync_end != new->hsync_end ||
+	    old->htotal != new->htotal ||
+	    old->vdisplay != new->vdisplay ||
+	    old->clock != new->clock ||
+	    old->flags != new->flags)
+		return false;
+
+	return dpu_encoder_panel_switches_mode(drm_enc);
+}
+
+/* Applies a mode that dpu_encoder_can_switch_mode() let through. */
+static void dpu_encoder_switch_mode(struct dpu_encoder_virt *dpu_enc)
+{
+	struct drm_encoder *drm_enc = &dpu_enc->base;
+	const struct drm_display_mode *mode;
+	struct dpu_encoder_phys *phys;
+	struct drm_bridge *bridge;
+	unsigned int i;
+	int ret;
+
+	if (!drm_enc->crtc || !dpu_enc->cur_master)
+		return;
+
+	mode = &drm_enc->crtc->state->adjusted_mode;
+	if (drm_mode_equal(&dpu_enc->cur_master->cached_mode, mode) ||
+	    !dpu_encoder_panel_switches_mode(drm_enc))
+		return;
+
+	bridge = drm_bridge_chain_get_last_bridge(drm_enc);
+	ret = drm_panel_bridge_switch_mode(bridge, mode);
+	drm_bridge_put(bridge);
+	if (ret)
+		DPU_ERROR_ENC(dpu_enc, "panel did not switch to %d Hz: %d\n",
+			      drm_mode_vrefresh(mode), ret);
+
+	for (i = 0; i < dpu_enc->num_phys_encs; i++) {
+		phys = dpu_enc->phys_encs[i];
+		phys->cached_mode = *mode;
+		if (phys->enable_state == DPU_ENC_ENABLED &&
+		    phys->ops.update_mode)
+			phys->ops.update_mode(phys);
+	}
 }
 
 static void _dpu_encoder_update_vsync_source(struct dpu_encoder_virt *dpu_enc,
@@ -2091,6 +2165,9 @@ void dpu_encoder_prepare_for_kickoff(struct drm_encoder *drm_enc)
 	DPU_ATRACE_END("enc_prepare_for_kickoff");
 
 	dpu_encoder_resource_control(drm_enc, DPU_ENC_RC_EVENT_KICKOFF);
+
+	/* The previous frame is out: a new refresh rate goes in before this one. */
+	dpu_encoder_switch_mode(dpu_enc);
 
 	/* if any phys needs reset, reset all phys, in-order */
 	if (needs_hw_reset) {
