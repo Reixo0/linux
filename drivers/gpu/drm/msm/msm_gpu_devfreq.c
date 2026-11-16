@@ -147,15 +147,14 @@ void msm_devfreq_init(struct msm_gpu *gpu)
 		return;
 
 	/*
-	 * Setup default values for simple_ondemand governor tuning.  We
-	 * want to throttle up at low load for the double-buffer case,
-	 * where due to stalling waiting for vblank we could get stuck
-	 * below the refresh rate at moderate utilization.  At 50% a
-	 * 144Hz panel settles at the lowest OPP, just under the
-	 * threshold, presenting ~100fps; at 20% the frequency settles
-	 * where each frame fits in its refresh.
+	 * Setup default values for simple_ondemand governor tuning.  Any
+	 * sample above upthreshold jumps to the highest OPP, below it the
+	 * frequency settles near upthreshold - downdifferential / 2 load.
+	 * 20% kept the GPU at 578-726 MHz for a 60 fps video that needs
+	 * 160 MHz; at 50% 144 Hz scrolling still reaches 144 fps (late
+	 * fences boost the clock) and video settles near 280 MHz.
 	 */
-	priv->gpu_devfreq_config.upthreshold = 20;
+	priv->gpu_devfreq_config.upthreshold = 50;
 	priv->gpu_devfreq_config.downdifferential = 10;
 
 	mutex_init(&df->lock);
