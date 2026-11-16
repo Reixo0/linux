@@ -234,6 +234,14 @@ static int alarmtimer_suspend(struct device *dev)
 	if (!rtc)
 		return 0;
 
+	/*
+	 * Wakeup disabled through sysfs: alarm timers neither arm the RTC
+	 * nor abort the suspend. They fire once the system is woken by
+	 * something else.
+	 */
+	if (!device_may_wakeup(dev))
+		return 0;
+
 	/* Find the soonest timer to expire */
 	for (i = 0; i < ALARM_NUMTYPE; i++) {
 		struct alarm_base *base = &alarm_bases[i];
