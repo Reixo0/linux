@@ -672,22 +672,18 @@
 
 		vreg_l11b_1p0: ldo11 {
 			regulator-name = "vreg_l11b_1p0";
-			regulator-min-microvolt = <1000000>;
-			regulator-max-microvolt = <1292000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
-			regulator-allow-set-load;
-			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
-						   RPMH_REGULATOR_MODE_AUTO>;
+			/* panel vdd: vendor 1.25 V, HPM (220 mA load) */
+			regulator-min-microvolt = <1256000>;
+			regulator-max-microvolt = <1256000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
 		vreg_l12b_1p8: ldo12 {
 			regulator-name = "vreg_l12b_1p8";
-			regulator-min-microvolt = <1200000>;
+			/* panel vddio: vendor 1.8 V, HPM (154 mA load) */
+			regulator-min-microvolt = <1800000>;
 			regulator-max-microvolt = <1800000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
-			regulator-allow-set-load;
-			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
-						   RPMH_REGULATOR_MODE_AUTO>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
 		vreg_l13b_3p0: ldo13 {
