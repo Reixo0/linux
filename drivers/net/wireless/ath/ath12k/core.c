@@ -1646,7 +1646,14 @@ static void ath12k_core_post_reconfigure_recovery(struct ath12k_base *ab)
 		switch (ah->state) {
 		case ATH12K_HW_STATE_ON:
 			ah->state = ATH12K_HW_STATE_RESTARTING;
-
+			fallthrough;
+		case ATH12K_HW_STATE_RESTARTING:
+			/*
+			 * Also when a failed WoW resume moved it here first:
+			 * left unhalted, its vifs stay on ar->arvifs, and
+			 * mac80211 adding them again (memset of a linked
+			 * entry) turns the list into an endless loop.
+			 */
 			for (j = 0; j < ah->num_radio; j++) {
 				ar = &ah->radio[j];
 				ath12k_core_halt(ar);
@@ -1658,8 +1665,6 @@ static void ath12k_core_post_reconfigure_recovery(struct ath12k_base *ab)
 			ath12k_warn(ab,
 				    "cannot restart hw %d that hasn't been started\n",
 				    i);
-			break;
-		case ATH12K_HW_STATE_RESTARTING:
 			break;
 		case ATH12K_HW_STATE_RESTARTED:
 			ah->state = ATH12K_HW_STATE_WEDGED;
@@ -1711,6 +1716,14 @@ static void ath12k_core_restart(struct work_struct *work)
 
 		for (i = 0; i < ag->num_hw; i++) {
 			ah = ath12k_ag_to_ah(ag, i);
+			/*
+			 * Not running in mac80211 since the crash (the crash
+			 * failed a system resume, say): it has nothing left to
+			 * restore, and the next open starts the hw afresh.
+			 */
+			if (READ_ONCE(ah->state) != ATH12K_HW_STATE_RESTARTING ||
+			    !READ_ONCE(ah->started))
+				continue;
 			ieee80211_restart_hw(ah->hw);
 		}
 

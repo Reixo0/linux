@@ -1005,8 +1005,16 @@ exit:
 			ah->state = ATH12K_HW_STATE_RESTARTING;
 			ret = 1;
 			break;
-		case ATH12K_HW_STATE_OFF:
 		case ATH12K_HW_STATE_RESTARTING:
+			/*
+			 * The firmware crashed during the resume and its
+			 * recovery has begun: ask mac80211 for a regular
+			 * restart too. Failing the resume instead leaves
+			 * mac80211 suspended, and Wi-Fi hangs for good.
+			 */
+			ret = 1;
+			break;
+		case ATH12K_HW_STATE_OFF:
 		case ATH12K_HW_STATE_RESTARTED:
 		case ATH12K_HW_STATE_WEDGED:
 		case ATH12K_HW_STATE_TM:

@@ -9974,6 +9974,7 @@ int ath12k_mac_op_start(struct ieee80211_hw *hw)
 {
 	struct ath12k_hw *ah = ath12k_hw_to_ah(hw);
 	struct ath12k *ar;
+	bool fresh;
 	int ret, i;
 
 	if (ath12k_ftm_mode)
@@ -9985,12 +9986,48 @@ int ath12k_mac_op_start(struct ieee80211_hw *hw)
 
 	guard(mutex)(&ah->hw_mutex);
 
+	/*
+	 * mac80211 restarts a running hw without stopping it first; any
+	 * other start opens it afresh. A failed start leaves it stopped
+	 * without a stop call, so clear the mark until this one succeeds.
+	 */
+	fresh = !ah->started;
+	ah->started = false;
+
+	/*
+	 * A firmware crash during system resume fails mac80211's resume,
+	 * which shuts every interface down; userspace then brings one up
+	 * again while the firmware is still reloading. Refuse that start
+	 * without touching the state: every command would time out.
+	 */
+	for_each_ar(ah, ar, i) {
+		if (!test_bit(ATH12K_FLAG_CRASH_FLUSH, &ar->ab->dev_flags))
+			continue;
+
+		/*
+		 * mac80211 now drops its interfaces without removing them
+		 * from the driver, and may free them (userspace deletes the
+		 * P2P device): unlink them all here, or ar->arvifs keeps
+		 * freed entries. The next open then starts the hw afresh.
+		 */
+		if (ah->state == ATH12K_HW_STATE_ON ||
+		    ah->state == ATH12K_HW_STATE_RESTARTING) {
+			for_each_ar(ah, ar, i)
+				ath12k_core_halt(ar);
+			ath12k_mac_dp_peer_cleanup(ah);
+			ah->state = ATH12K_HW_STATE_OFF;
+		}
+
+		return -EBUSY;
+	}
+
 	switch (ah->state) {
 	case ATH12K_HW_STATE_OFF:
 		ah->state = ATH12K_HW_STATE_ON;
 		break;
 	case ATH12K_HW_STATE_RESTARTING:
-		ah->state = ATH12K_HW_STATE_RESTARTED;
+		/* Opened afresh: mac80211 dropped what the restart was for */
+		ah->state = fresh ? ATH12K_HW_STATE_ON : ATH12K_HW_STATE_RESTARTED;
 		break;
 	case ATH12K_HW_STATE_RESTARTED:
 	case ATH12K_HW_STATE_WEDGED:
@@ -10011,6 +10048,35 @@ int ath12k_mac_op_start(struct ieee80211_hw *hw)
 				   ar->pdev_idx, ret);
 			goto fail_start;
 		}
+	}
+
+	ah->started = true;
+
+	/*
+	 * Started afresh after a crash whose restart mac80211 dropped (no
+	 * interface was open, so reconfig_complete never comes): wake the
+	 * queues the recovery stopped and finish the reset here.
+	 */
+	if (ah->state == ATH12K_HW_STATE_ON) {
+		bool was_reset = false;
+
+		for_each_ar(ah, ar, i) {
+			struct ath12k_base *ab = ar->ab;
+
+			if (!ab->is_reset)
+				continue;
+
+			was_reset = true;
+			atomic_dec(&ab->reset_count);
+			complete(&ab->reset_complete);
+			ab->is_reset = false;
+			atomic_set(&ab->fail_cont_count, 0);
+			ath12k_warn(ab, "pdev %d recovered by a fresh start\n",
+				    ar->pdev->pdev_id);
+		}
+
+		if (was_reset)
+			ieee80211_wake_queues(hw);
 	}
 
 	return 0;
@@ -10149,6 +10215,7 @@ void ath12k_mac_op_stop(struct ieee80211_hw *hw, bool suspend)
 	mutex_lock(&ah->hw_mutex);
 
 	ah->state = ATH12K_HW_STATE_OFF;
+	ah->started = false;
 
 	for_each_ar(ah, ar, i)
 		ath12k_mac_stop(ar);

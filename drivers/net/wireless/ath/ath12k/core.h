@@ -784,6 +784,8 @@ struct ath12k_hw {
 	 */
 	struct mutex hw_mutex;
 	enum ath12k_hw_state state;
+	/* mac80211 has the hw started: a start without it is a fresh open */
+	bool started;
 
 	/* protects survey[] shared across radios of this hw. */
 	spinlock_t survey_lock;
