@@ -48,6 +48,10 @@ int crm_write_perf_ol(const struct device *dev, u32 drv_id, const struct crm_cmd
 int crm_write_bw_vote(const struct device *dev, u32 drv_id, const struct crm_cmd *cmd);
 int crm_write_bw_pt_vote(const struct device *dev, u32 drv_id, const struct crm_cmd *cmd);
 struct device *crm_get(const struct device *dev);
+int crm_write_hw_perf_ol(const struct device *dev, u32 drv_id, u32 pwr_state,
+			 u32 resource_idx, u32 level);
+int crm_write_hw_pwr_states(const struct device *dev, u32 drv_id);
+int crm_hw_drv_switch_pending(const struct device *dev, u32 drv_id);
 #else
 
 static inline int crm_write_perf_ol(const struct device *dev,
@@ -66,6 +70,18 @@ static inline int crm_write_bw_pt_vote(const struct device *dev,
 { return -ENODEV; }
 static inline struct device *crm_get(const struct device *dev)
 { return NULL; }
+
+static inline int crm_write_hw_perf_ol(const struct device *dev, u32 drv_id,
+				       u32 pwr_state, u32 resource_idx, u32 level)
+{ return -ENODEV; }
+
+static inline int crm_write_hw_pwr_states(const struct device *dev, u32 drv_id)
+{ return -ENODEV; }
+
+static inline int crm_hw_drv_switch_pending(const struct device *dev, u32 drv_id)
+{
+	return 0;
+}
 
 #endif /* CONFIG_QCOM_CRM */
 

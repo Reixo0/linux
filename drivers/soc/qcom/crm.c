@@ -24,6 +24,7 @@
 #define CREATE_TRACE_POINTS
 #include "trace-crm.h"
 
+
 #undef field_get
 #define field_get(_mask, _reg) (((_reg) & (_mask)) >> (ffs(_mask) - 1))
 
@@ -47,6 +48,8 @@
 /* SW DRV has ACTIVE, SLEEP and WAKE PWR STATES */
 
 #define MAX_SW_DRV_PWR_STATES		3
+#define MAX_HW_DRV_PWR_STATES		5
+#define HW_DRV_SWITCH_TIMEOUT_US	10000
 /* Time out for ACTIVE Only PWR STATE completion IRQ */
 #define CRM_TIMEOUT_MS			msecs_to_jiffies(10000)
 
@@ -263,12 +266,54 @@ enum crm_capability {
  * @sw_drv_bw_vote_vcd_regs:	BW_VOTE voting registers
  * @sw_drv_bw_pt_vote_vcd_regs: BW_PT_VOTE voting registers
  */
+/*
+ * HW DRV registers. A HW DRV (a hardware client such as the PCIe controller)
+ * votes per power state of its client, and its votes are double buffered: the
+ * CPU fills the idle channel and then switches the DRV over to it.
+ */
+enum crm_hw_ctrl {
+	HW_CHN_STATUS,
+	HW_CHN_SWITCH,
+	HW_CTRL_DISTANCE,
+	HW_CTRL_REG_MAX,
+};
+
+enum crm_hw_client {
+	HW_DRV_BASE,
+	HW_DRV_DISTANCE,
+	HW_DRV_RESOURCE_DISTANCE,
+	HW_PWR_ST0,
+	HW_PWR_ST4 = HW_PWR_ST0 + MAX_HW_DRV_PWR_STATES - 1,
+	HW_CHANNEL_DISTANCE,
+	HW_CLIENT_REG_MAX,
+};
+
 struct crm_desc {
 	u32 crm_capability;
 	u32 *cfg_regs;
 	u32 sw_drv_perf_ol_vcd_regs[CRM_CLIENT_REG_MAX];
 	u32 sw_drv_bw_vote_vcd_regs[CRM_CLIENT_REG_MAX];
 	u32 sw_drv_bw_pt_vote_vcd_regs[CRM_CLIENT_REG_MAX];
+	u32 hw_drv_ctrl_regs[HW_CTRL_REG_MAX];
+	u32 hw_drv_perf_ol_vcd_regs[HW_CLIENT_REG_MAX];
+	u32 hw_drv_bw_pt_vote_vcd_regs[HW_CLIENT_REG_MAX];
+};
+
+/**
+ * struct crm_hw_drv: a HW DRV and the votes the CPU keeps for it
+ *
+ * @drv_id:	HW DRV number
+ * @lock:	Serialises cache updates and channel switches
+ * @perf_ol:	PERF_OL votes, [resource][power state]
+ * @num_perf_ol: Number of PERF_OL resources
+ * @num_bw_pt:	Number of BW_PT nodes (always voted 0: bandwidth stays on RPMh)
+ */
+struct crm_hw_drv {
+	u32 drv_id;
+	spinlock_t lock;
+	u32 (*perf_ol)[MAX_HW_DRV_PWR_STATES];
+	u32 num_perf_ol;
+	u32 num_bw_pt;
 };
 
 /**
@@ -354,6 +399,8 @@ struct crm_drv_top {
 	void __iomem *base;
 	struct crm_drv *sw_drvs;
 	int num_sw_drvs;
+	struct crm_hw_drv *hw_drvs;
+	int num_hw_drvs;
 	int max_sw_drv;
 	struct list_head list;
 	const struct crm_desc *desc;
@@ -702,6 +749,191 @@ struct device *crm_get(const struct device *dev)
 }
 EXPORT_SYMBOL_GPL(crm_get);
 
+static struct crm_hw_drv *crm_find_hw_drv(const struct device *dev, u32 drv_id)
+{
+	struct crm_drv_top *crm;
+	int i;
+
+	if (!dev)
+		return NULL;
+
+	crm = dev_get_drvdata(dev);
+	if (!crm)
+		return NULL;
+
+	for (i = 0; i < crm->num_hw_drvs; i++)
+		if (crm->hw_drvs[i].drv_id == drv_id)
+			return &crm->hw_drvs[i];
+
+	return NULL;
+}
+
+static void __iomem *crm_hw_offset(const struct crm_drv_top *crm, const u32 *regs,
+				   u32 drv_id, u32 resource, u32 pwr_state, u32 ch)
+{
+	return crm->base + regs[HW_DRV_BASE] + drv_id * regs[HW_DRV_DISTANCE] +
+	       resource * regs[HW_DRV_RESOURCE_DISTANCE] +
+	       regs[HW_PWR_ST0 + pwr_state] + ch * regs[HW_CHANNEL_DISTANCE];
+}
+
+/**
+ * crm_write_hw_perf_ol() - Cache a HW DRV's PERF_OL vote for one power state
+ * @dev: CRM device
+ * @drv_id: HW DRV number
+ * @pwr_state: Power state of the HW client
+ * @resource_idx: VCD
+ * @level: Performance level
+ *
+ * The vote takes effect with the next crm_write_hw_pwr_states().
+ *
+ * Return: 0 on success, -EINVAL for a bad DRV, state, VCD or level.
+ */
+int crm_write_hw_perf_ol(const struct device *dev, u32 drv_id, u32 pwr_state,
+			 u32 resource_idx, u32 level)
+{
+	struct crm_hw_drv *hw = crm_find_hw_drv(dev, drv_id);
+	unsigned long flags;
+
+	if (!hw || pwr_state >= MAX_HW_DRV_PWR_STATES ||
+	    resource_idx >= hw->num_perf_ol || level > 7)
+		return -EINVAL;
+
+	spin_lock_irqsave(&hw->lock, flags);
+	hw->perf_ol[resource_idx][pwr_state] = level;
+	spin_unlock_irqrestore(&hw->lock, flags);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(crm_write_hw_perf_ol);
+
+/**
+ * crm_write_hw_pwr_states() - Apply a HW DRV's cached votes
+ * @dev: CRM device
+ * @drv_id: HW DRV number
+ *
+ * Writes every cached vote into the DRV's idle channel and switches the DRV
+ * over to it.
+ *
+ * Return: 0 on success, -EINVAL for a bad DRV, -EIO for a channel state the
+ * hardware should never report, -ETIMEDOUT if the switch does not complete.
+ */
+int crm_write_hw_pwr_states(const struct device *dev, u32 drv_id)
+{
+	struct crm_hw_drv *hw = crm_find_hw_drv(dev, drv_id);
+	const struct crm_desc *desc;
+	struct crm_drv_top *crm;
+	void __iomem *status, *sw;
+	unsigned long flags;
+	u32 cur, ch, r, st, val;
+	int ret;
+
+	if (!hw)
+		return -EINVAL;
+
+	crm = dev_get_drvdata(dev);
+	desc = crm->desc;
+	status = crm->base + desc->hw_drv_ctrl_regs[HW_CHN_STATUS] +
+		 drv_id * desc->hw_drv_ctrl_regs[HW_CTRL_DISTANCE];
+	sw = crm->base + desc->hw_drv_ctrl_regs[HW_CHN_SWITCH] +
+	     drv_id * desc->hw_drv_ctrl_regs[HW_CTRL_DISTANCE];
+
+	spin_lock_irqsave(&hw->lock, flags);
+
+	/* The channel in use: bit 0 or bit 1, or none before the first switch. */
+	cur = readl_relaxed(sw);
+
+	if (cur && !(cur & 0x3)) {
+		spin_unlock_irqrestore(&hw->lock, flags);
+		dev_err(dev, "HW DRV %u: bad channel state %#x\n", drv_id, cur);
+		return -EIO;
+	}
+	ch = cur & BIT(0);
+
+	for (r = 0; r < hw->num_perf_ol; r++)
+		for (st = 0; st < MAX_HW_DRV_PWR_STATES; st++)
+			writel_relaxed(hw->perf_ol[r][st],
+				       crm_hw_offset(crm, desc->hw_drv_perf_ol_vcd_regs,
+						     drv_id, r, st, ch));
+
+	/*
+	 * BW_PT slots stay empty: the bandwidth commands go through the
+	 * interconnect driver's own votes for now. Android writes BCM commands
+	 * here; the CRM keeps the link's bandwidth then, which is the next step.
+	 */
+	if (desc->crm_capability & BW_PT_VOTING_CAPABLE)
+		for (r = 0; r < hw->num_bw_pt; r++)
+			for (st = 0; st < MAX_HW_DRV_PWR_STATES; st++)
+				writel_relaxed(0, crm_hw_offset(crm,
+						desc->hw_drv_bw_pt_vote_vcd_regs,
+						drv_id, r, st, ch));
+
+	writel(BIT(ch), sw);
+	ret = readl_poll_timeout_atomic(status, val, val & BIT(ch), 100,
+					HW_DRV_SWITCH_TIMEOUT_US);
+	if (ret)
+		dev_err(dev, "HW DRV %u: ch %u switch timed out (status %#x, switch %#x)\n",
+			drv_id, ch, val, readl(sw));
+
+	spin_unlock_irqrestore(&hw->lock, flags);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(crm_write_hw_pwr_states);
+
+/* Debug: is a HW DRV channel switch still waiting for the hardware? */
+int crm_hw_drv_switch_pending(const struct device *dev, u32 drv_id)
+{
+	struct crm_drv_top *crm = dev_get_drvdata(dev);
+	const struct crm_desc *desc = crm->desc;
+	u32 off = drv_id * desc->hw_drv_ctrl_regs[HW_CTRL_DISTANCE];
+	u32 sw = readl(crm->base + desc->hw_drv_ctrl_regs[HW_CHN_SWITCH] + off) & 0x3;
+	u32 st = readl(crm->base + desc->hw_drv_ctrl_regs[HW_CHN_STATUS] + off);
+
+	return sw && !(st & sw);
+}
+EXPORT_SYMBOL_GPL(crm_hw_drv_switch_pending);
+
+
+static int crm_probe_hw_drvs(struct crm_drv_top *crm, u32 crm_cfg, u32 crm_cfg_2)
+{
+	struct device_node *dn = crm->dev->of_node;
+	u32 ids[8];
+	int i, n;
+
+	n = of_property_count_u32_elems(dn, "qcom,hw-drv-ids");
+	if (n <= 0 || !crm->desc->hw_drv_ctrl_regs[HW_CTRL_DISTANCE])
+		return 0;
+	if (n > ARRAY_SIZE(ids))
+		return -EINVAL;
+
+	if (of_property_read_u32_array(dn, "qcom,hw-drv-ids", ids, n))
+		return -EINVAL;
+
+	crm->hw_drvs = devm_kcalloc(crm->dev, n, sizeof(*crm->hw_drvs), GFP_KERNEL);
+	if (!crm->hw_drvs)
+		return -ENOMEM;
+
+	for (i = 0; i < n; i++) {
+		struct crm_hw_drv *hw = &crm->hw_drvs[i];
+
+		hw->drv_id = ids[i];
+		spin_lock_init(&hw->lock);
+		hw->num_perf_ol = field_get(crm->desc->cfg_regs[NUM_VCD_VOTED_BY_PERF_OL],
+					    crm_cfg);
+		hw->num_bw_pt = field_get(crm->desc->cfg_regs[NUM_OF_NODES_PT], crm_cfg);
+		hw->perf_ol = devm_kcalloc(crm->dev, hw->num_perf_ol ?: 1,
+					   sizeof(*hw->perf_ol), GFP_KERNEL);
+		if (!hw->perf_ol)
+			return -ENOMEM;
+	}
+	crm->num_hw_drvs = n;
+
+	dev_info(crm->dev, "%d HW DRVs, %u PERF_OL VCDs, %u BW_PT nodes\n", n,
+		 crm->hw_drvs[0].num_perf_ol, crm->hw_drvs[0].num_bw_pt);
+
+	return 0;
+}
+
 static int crm_probe_get_irqs(struct crm_drv_top *crm)
 {
 	struct crm_drv *drvs = crm->sw_drvs;
@@ -833,6 +1065,7 @@ static int crm_probe_drvs(struct crm_drv_top *crm, struct device_node *dn)
 {
 	u32 crm_ver, major_ver, minor_ver;
 	u32 crm_cfg, crm_cfg_2;
+	int ret;
 
 	crm_ver = readl_relaxed(crm->cfg + crm->desc->cfg_regs[CRM_VERSION]);
 	major_ver = field_get(crm->desc->cfg_regs[MAJOR_VERSION], crm_ver);
@@ -854,6 +1087,10 @@ static int crm_probe_drvs(struct crm_drv_top *crm, struct device_node *dn)
 		return -EINVAL;
 
 	crm_cfg_2 = readl_relaxed(crm->cfg + crm->desc->cfg_regs[CRM_CFG_PARAM_2]);
+
+	ret = crm_probe_hw_drvs(crm, crm_cfg, crm_cfg_2);
+	if (ret)
+		return ret;
 
 	return crm_probe_set_vcd_caches(crm, crm_cfg, crm_cfg_2);
 }
@@ -976,7 +1213,91 @@ static const struct crm_desc disp_crm_desc_v2 = {
 	},
 };
 
+static u32 crm_v3_cfg[] = {
+	[CRM_VERSION]			= 0x0,
+	[MAJOR_VERSION]			= GENMASK(23, 16),
+	[MINOR_VERSION]			= GENMASK(15, 8),
+	[CRM_CFG_PARAM_1]		= 0x4,
+	[NUM_OF_NODES_PT]		= GENMASK(30, 26),
+	[NUM_VCD_VOTED_BY_BW]		= GENMASK(25, 23),
+	[NUM_SW_DRVS]			= GENMASK(22, 18),
+	[NUM_OF_RAILS]			= GENMASK(13, 10),
+	[NUM_VCD_VOTED_BY_PERF_OL]	= GENMASK(9, 6),
+	[CRM_CFG_PARAM_2]		= 0x8,
+	[NUM_OF_NODES]			= GENMASK(30, 26),
+	[CRM_ENABLE]			= 0xc,
+};
+
+/* Android flags only PERF_OL and BW_PT voting for the PCIe CRM. */
+static const struct crm_desc pcie_crm_desc_v3 = {
+	.crm_capability = PERF_OL_VOTING_CAPABLE | BW_PT_VOTING_CAPABLE,
+	.cfg_regs = crm_v3_cfg,
+	.sw_drv_perf_ol_vcd_regs = {
+		[DRV_BASE]			 = 0x3b0,
+		[DRV_DISTANCE]			 = 0x1000,
+		[DRV_RESOURCE_DISTANCE]		 = 0x20,
+		[ACTIVE_VOTE]			 = 0x0,
+		[SLEEP_VOTE]			 = 0x4,
+		[WAKE_VOTE]			 = 0x8,
+		[IRQ_STATUS]			 = 0x10,
+		[IRQ_CLEAR]			 = 0x14,
+		[IRQ_ENABLE]			 = 0x18,
+	},
+	.sw_drv_bw_vote_vcd_regs = {
+		[DRV_BASE]			 = 0x3b0,
+		[DRV_DISTANCE]			 = 0x1000,
+		[DRV_RESOURCE_DISTANCE]		 = 0x10,
+		[ACTIVE_VOTE]			 = 0x40,
+		[SLEEP_VOTE]			 = 0x44,
+		[WAKE_VOTE]			 = 0x48,
+		[IRQ_STATUS]			 = 0x160,
+		[IRQ_CLEAR]			 = 0x164,
+		[IRQ_ENABLE]			 = 0x168,
+	},
+	.sw_drv_bw_pt_vote_vcd_regs = {
+		[DRV_BASE]			 = 0x3b0,
+		[DRV_DISTANCE]			 = 0x1000,
+		[DRV_RESOURCE_DISTANCE]		 = 0x10,
+		[ACTIVE_VOTE]			 = 0x60,
+		[SLEEP_VOTE]			 = 0x64,
+		[WAKE_VOTE]			 = 0x68,
+		[IRQ_STATUS]			 = 0x170,
+		[IRQ_CLEAR]			 = 0x174,
+		[IRQ_ENABLE]			 = 0x178,
+		[CRMB_PT_TRIGGER]		 = 0x270,
+	},
+	/* Decoded from the vendor crm-v2 module (pcie_crm_desc_v3). */
+	.hw_drv_ctrl_regs = {
+		[HW_CHN_STATUS]			 = 0x370,
+		[HW_CHN_SWITCH]			 = 0x374,
+		[HW_CTRL_DISTANCE]		 = 0x1000,
+	},
+	.hw_drv_perf_ol_vcd_regs = {
+		[HW_DRV_BASE]			 = 0x0,
+		[HW_DRV_DISTANCE]		 = 0x1000,
+		[HW_DRV_RESOURCE_DISTANCE]	 = 0x2c,
+		[HW_PWR_ST0]			 = 0x0,
+		[HW_PWR_ST0 + 1]		 = 0x4,
+		[HW_PWR_ST0 + 2]		 = 0x8,
+		[HW_PWR_ST0 + 3]		 = 0xc,
+		[HW_PWR_ST4]			 = 0x10,
+		[HW_CHANNEL_DISTANCE]		 = 0x14,
+	},
+	.hw_drv_bw_pt_vote_vcd_regs = {
+		[HW_DRV_BASE]			 = 0x0,
+		[HW_DRV_DISTANCE]		 = 0x1000,
+		[HW_DRV_RESOURCE_DISTANCE]	 = 0x2c,
+		[HW_PWR_ST0]			 = 0xb0,
+		[HW_PWR_ST0 + 1]		 = 0xb4,
+		[HW_PWR_ST0 + 2]		 = 0xb8,
+		[HW_PWR_ST0 + 3]		 = 0xbc,
+		[HW_PWR_ST4]			 = 0xc0,
+		[HW_CHANNEL_DISTANCE]		 = 0x14,
+	},
+};
+
 static const struct of_device_id crm_drv_match[] = {
+	{ .compatible = "qcom,kaanapali-pcie-crm", .data = &pcie_crm_desc_v3 },
 	{ .compatible = "qcom,sm8750-disp-crm", .data = &disp_crm_desc_v2 },
 	{ }
 };

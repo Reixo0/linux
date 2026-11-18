@@ -5956,29 +5956,35 @@ static int qmp_pcie_set_mode(struct phy *phy, enum phy_mode mode, int submode)
 }
 
 /*
- * The ref clock stays on: it only opens the refclk gate, and the processor
- * holding the link needs it.
+ * For the ADSP DRV the ref clock stays on: it only opens the refclk gate, and
+ * the processor holding the link needs it. Under CESTA the hardware runs the
+ * refclk itself, and a host vote on it stalls CESTA, so it goes too.
  */
-static void qmp_pcie_drv_clks_off(struct qmp_pcie *qmp)
+static bool qmp_pcie_drv_clk(struct qmp_pcie *qmp, int i, bool ref)
+{
+	return ref || strcmp(qmp->clks[i].id, "ref");
+}
+
+static void qmp_pcie_drv_clks_off(struct qmp_pcie *qmp, bool ref)
 {
 	int i;
 
 	for (i = ARRAY_SIZE(qmp_pciephy_clk_l) - 1; i >= 0; i--)
-		if (strcmp(qmp->clks[i].id, "ref"))
+		if (qmp_pcie_drv_clk(qmp, i, ref))
 			clk_disable_unprepare(qmp->clks[i].clk);
 }
 
-static int qmp_pcie_drv_clks_on(struct qmp_pcie *qmp)
+static int qmp_pcie_drv_clks_on(struct qmp_pcie *qmp, bool ref)
 {
 	int i, ret;
 
 	for (i = 0; i < ARRAY_SIZE(qmp_pciephy_clk_l); i++) {
-		if (!strcmp(qmp->clks[i].id, "ref"))
+		if (!qmp_pcie_drv_clk(qmp, i, ref))
 			continue;
 		ret = clk_prepare_enable(qmp->clks[i].clk);
 		if (ret) {
 			while (--i >= 0)
-				if (strcmp(qmp->clks[i].id, "ref"))
+				if (qmp_pcie_drv_clk(qmp, i, ref))
 					clk_disable_unprepare(qmp->clks[i].clk);
 			return ret;
 		}
@@ -5996,20 +6002,25 @@ static int qmp_pcie_notify_phystate(struct phy *phy, union phy_notify state)
 {
 	struct qmp_pcie *qmp = phy_get_drvdata(phy);
 	const struct qmp_phy_cfg *cfg = qmp->cfg;
+	bool ref;
 	int ret;
 
 	switch (state.pcie_state) {
 	case PHY_PCIE_DRV_ENTER:
+	case PHY_PCIE_CESTA_ENTER:
+		ref = state.pcie_state == PHY_PCIE_CESTA_ENTER;
 		clk_bulk_disable_unprepare(qmp->num_pipe_clks, qmp->pipe_clks);
-		qmp_pcie_drv_clks_off(qmp);
+		qmp_pcie_drv_clks_off(qmp, ref);
 		regulator_bulk_disable(cfg->num_vregs, qmp->vregs);
 		device_set_wakeup_path(qmp->dev);
 		return 0;
 	case PHY_PCIE_DRV_EXIT:
+	case PHY_PCIE_CESTA_EXIT:
+		ref = state.pcie_state == PHY_PCIE_CESTA_EXIT;
 		ret = regulator_bulk_enable(cfg->num_vregs, qmp->vregs);
 		if (ret)
 			return ret;
-		ret = qmp_pcie_drv_clks_on(qmp);
+		ret = qmp_pcie_drv_clks_on(qmp, ref);
 		if (ret)
 			goto err_disable_regulators;
 		ret = clk_bulk_prepare_enable(qmp->num_pipe_clks, qmp->pipe_clks);
@@ -6021,7 +6032,7 @@ static int qmp_pcie_notify_phystate(struct phy *phy, union phy_notify state)
 	return -EOPNOTSUPP;
 
 err_disable_clks:
-	qmp_pcie_drv_clks_off(qmp);
+	qmp_pcie_drv_clks_off(qmp, ref);
 err_disable_regulators:
 	regulator_bulk_disable(cfg->num_vregs, qmp->vregs);
 	return ret;

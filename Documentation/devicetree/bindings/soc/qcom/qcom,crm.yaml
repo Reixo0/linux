@@ -17,6 +17,7 @@ description:
 properties:
   compatible:
     enum:
+      - qcom,kaanapali-pcie-crm
       - qcom,sm8750-disp-crm
 
   label:
@@ -26,6 +27,7 @@ properties:
         items:
           - enum:
               - disp_crm
+              - pcie_crm
 
   reg:
     minItems: 2
@@ -51,6 +53,17 @@ properties:
     description:
       List of SW DRV IDs used within kernel. May contain holes as some DRVs can
       be allocated to DSPs / can be spare.
+
+  qcom,hw-drv-ids:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    minItems: 1
+    maxItems: 8
+    items:
+      minimum: 0
+      maximum: 7
+    description:
+      List of HW DRV IDs the kernel votes for on behalf of a hardware client
+      (such as a PCIe controller), one per power state of that client.
 
 required:
   - compatible

@@ -64,11 +64,15 @@ enum phy_ufs_state {
 /*
  * PCIe DRV: another processor holds the link in L1 substates while the host
  * sleeps. On enter the PHY drops what the host votes for and keeps its
- * configuration; on exit it takes them back.
+ * configuration; on exit it takes them back. With CESTA the hardware itself
+ * runs the PHY's clocks, the reference clock included, while it holds the
+ * link, so the host drops that one too.
  */
 enum phy_pcie_state {
 	PHY_PCIE_DRV_ENTER,
 	PHY_PCIE_DRV_EXIT,
+	PHY_PCIE_CESTA_ENTER,
+	PHY_PCIE_CESTA_EXIT,
 };
 
 union phy_notify {

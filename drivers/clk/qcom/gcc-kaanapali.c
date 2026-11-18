@@ -3142,7 +3142,12 @@ static struct gdsc gcc_pcie_0_gdsc = {
 	.pd = {
 		.name = "gcc_pcie_0_gdsc",
 	},
-	.pwrsts = PWRSTS_RET_ON,
+	/*
+	 * Really drop the vote on power off: when the link is handed to
+	 * CESTA for system suspend, its sequencer can only collapse the GDSC
+	 * once Linux's vote is gone, and stalls otherwise.
+	 */
+	.pwrsts = PWRSTS_OFF_ON,
 	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | VOTABLE,
 };
 

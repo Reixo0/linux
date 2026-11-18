@@ -31,4 +31,11 @@ static inline bool irq_domain_qcom_handle_wakeup(const struct irq_domain *d)
 	return (d->flags & IRQ_DOMAIN_FLAG_QCOM_PDC_WAKEUP);
 }
 
+#if IS_ENABLED(CONFIG_PINCTRL_MSM)
+int msm_gpio_wakeup_set(unsigned int gpio, bool enable);
+#else
+static inline int msm_gpio_wakeup_set(unsigned int gpio, bool enable)
+{ return -ENODEV; }
+#endif
+
 #endif

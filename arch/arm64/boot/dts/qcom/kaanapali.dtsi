@@ -2382,13 +2382,31 @@
 			      <0x0 0x40000f20 0x0 0xa8>,
 			      <0x0 0x40001000 0x0 0x1000>,
 			      <0x0 0x40100000 0x0 0x100000>,
-			      <0x0 0x01c03000 0x0 0x1000>;
+			      <0x0 0x01c03000 0x0 0x1000>,
+			      <0x0 0x01d07000 0x0 0x7000>,
+			      <0x0 0x0b370000 0x0 0x10000>;
 			reg-names = "parf",
 				    "dbi",
 				    "elbi",
 				    "atu",
 				    "config",
-				    "mhi";
+				    "mhi",
+				    "pcie_sm",
+				    "pcie_pdc";
+
+			/* CESTA holds the link through system suspend. */
+			qcom,crm = <&pcie_crm>;
+			qcom,pcie-sm-seq = <0x1c018081 0x70074002 0x50028000 0x28007003
+					    0x80804002 0x70021c01 0x18002802 0x70005000
+					    0x10004000 0x80814002 0x18001c01 0x1c018080
+					    0x1000>;
+			qcom,pcie-sm-branch-seq = <0x04 0x1c 0x24 0x2c 0x00 0x00 0x00>;
+			qcom,pcie-sm-branch-offset = <0x1000>;
+			qcom,pcie-sm-start-offset = <0x1090>;
+			qcom,pcie-clkreq-offset = <0x2c48>;
+			qcom,pcie-clkreq-pin = <103>;
+			qcom,drv-l1ss-timeout-us = <5000>;
+			qcom,aux-clk-freq = <20>;
 			#address-cells = <3>;
 			#size-cells = <2>;
 			ranges = <0x01000000 0x0 0x00000000 0x0 0x40200000 0x0 0x100000>,
@@ -2552,6 +2570,16 @@
 			#phy-cells = <0>;
 
 			status = "disabled";
+		};
+
+		pcie_crm: crm@1d01000 {
+			compatible = "qcom,kaanapali-pcie-crm";
+			label = "pcie_crm";
+			reg = <0x0 0x01d01000 0x0 0x2000>,
+			      <0x0 0x01d05e00 0x0 0x200>;
+			interrupts = <GIC_SPI 641 IRQ_TYPE_EDGE_RISING>;
+			qcom,sw-drv-ids = <0>;
+			qcom,hw-drv-ids = <0>;
 		};
 
 		ufs_mem_phy: phy@1d80000 {

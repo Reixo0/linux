@@ -38,6 +38,9 @@
 #include <linux/types.h>
 #include <linux/units.h>
 
+#include <linux/soc/qcom/irq.h>
+#include <soc/qcom/crm.h>
+
 #include "../../pci.h"
 #include "../pci-host-common.h"
 #include "pcie-designware.h"
@@ -317,6 +320,30 @@ struct qcom_pcie_port {
 	struct list_head perst;
 };
 
+/*
+ * CESTA (Kaanapali): while the system sleeps, the PCIe CRM's HW DRV holds the
+ * link's clocks and power in L1ss and a small state machine in the controller
+ * (pcie_sm) brings them back when the endpoint asserts CLKREQ#. Decoded from
+ * the vendor pci-msm-drv, crm-v2 and pcie-pdc modules.
+ */
+struct qcom_pcie_cesta {
+	struct device *crm;
+	void __iomem *sm;
+	void __iomem *pdc;
+	u32 *sm_seq;
+	int sm_seq_len;
+	u32 *sm_branch;
+	int sm_branch_len;
+	u32 sm_branch_offset;
+	u32 sm_start_offset;
+	u32 drv;		/* HW DRV and PERF_OL VCD: the root complex index */
+	u32 level;		/* PERF_OL level of an active link: Gen + 1 */
+	u32 l1ss_sleep;		/* L1ss sleep timeout in aux clock cycles */
+	u32 clkreq_offset;	/* PARF register that hands CLKREQ# to CESTA */
+	u32 clkreq_pin;		/* TLMM pin of CLKREQ# */
+	bool sm_loaded;
+};
+
 struct qcom_pcie {
 	struct dw_pcie *pci;
 	void __iomem *parf;			/* DT parf */
@@ -332,6 +359,7 @@ struct qcom_pcie {
 	bool use_pm_opp;
 	struct mutex reset_lock;
 	int drv_id;			/* PCIe DRV device id, <0 without */
+	struct qcom_pcie_cesta cesta;	/* .crm NULL without CESTA */
 	bool drv_active;
 	int wake_irq;
 	bool wake_armed;
@@ -1484,6 +1512,277 @@ static void qcom_pcie_enable_outbound_blocker(struct qcom_pcie *pcie)
 	readl(pcie->parf + PARF_SYS_CTRL);
 }
 
+#define PARF_CESTA_L1SS_SLEEP		0x180
+#define PARF_CESTA_L1SS_SLEEP_EN	BIT(31)
+#define PARF_CESTA_CLKREQ_OVERRIDE	0x2b0
+#define PARF_CESTA_CLKREQ_EN		(BIT(0) | BIT(3))
+/* pcie-pdc on Kaanapali: CLKREQ# (GPIO 103) is PDC input 63, config slot 10 */
+#define PCIE_PDC_MAP			0x4800
+#define PCIE_PDC_MAP_CLKREQ		63
+#define PCIE_PDC_CFG			(0x110 + 4 * 10)
+#define PCIE_PDC_CFG_FALLING		0x2
+#define PCIE_PDC_CFG_EN			BIT(3)
+
+enum qcom_pcie_cesta_state {
+	QCOM_PCIE_CESTA_D3COLD,
+	QCOM_PCIE_CESTA_D0,
+	QCOM_PCIE_CESTA_DRV,
+};
+
+/*
+ * PERF_OL levels: 0 off, 1 L1ss sleep, 2 + n Gen n + 1. Power state 0 of the
+ * HW DRV is the link sleeping in L1ss, power state 1 the link active.
+ */
+static int qcom_pcie_cesta_vote(struct qcom_pcie *pcie,
+				enum qcom_pcie_cesta_state state)
+{
+	struct qcom_pcie_cesta *c = &pcie->cesta;
+	u32 sleep, active;
+	int ret;
+
+	switch (state) {
+	case QCOM_PCIE_CESTA_D0:
+		sleep = active = c->level;
+		break;
+	case QCOM_PCIE_CESTA_DRV:
+		sleep = 1;
+		active = c->level;
+		break;
+	default:
+		sleep = active = 0;
+		break;
+	}
+
+	ret = crm_write_hw_perf_ol(c->crm, c->drv, 0, c->drv, sleep);
+	if (!ret)
+		ret = crm_write_hw_perf_ol(c->crm, c->drv, 1, c->drv, active);
+	if (!ret)
+		ret = crm_write_hw_pwr_states(c->crm, c->drv);
+	if (ret)
+		dev_err(pcie->pci->dev, "CESTA vote %d failed: %d\n", state, ret);
+
+	return ret;
+}
+
+static void qcom_pcie_cesta_load_sm(struct qcom_pcie *pcie)
+{
+	struct qcom_pcie_cesta *c = &pcie->cesta;
+	int i;
+
+	if (c->sm_loaded)
+		return;
+
+	for (i = 0; i < c->sm_seq_len; i++)
+		writel_relaxed(c->sm_seq[i], c->sm + 4 * i);
+	for (i = 0; i < c->sm_branch_len; i++)
+		writel_relaxed(c->sm_branch[i], c->sm + c->sm_branch_offset + 4 * i);
+	writel(readl(c->sm + c->sm_start_offset) | BIT(0), c->sm + c->sm_start_offset);
+
+	c->sm_loaded = true;
+}
+
+static u32 *qcom_pcie_cesta_read_seq(struct device *dev, const char *prop, int *len)
+{
+	u32 *seq;
+	int n;
+
+	n = of_property_count_u32_elems(dev->of_node, prop);
+	if (n <= 0)
+		return ERR_PTR(-EINVAL);
+
+	seq = devm_kcalloc(dev, n, sizeof(*seq), GFP_KERNEL);
+	if (!seq)
+		return ERR_PTR(-ENOMEM);
+
+	if (of_property_read_u32_array(dev->of_node, prop, seq, n))
+		return ERR_PTR(-EINVAL);
+
+	*len = n;
+	return seq;
+}
+
+static int qcom_pcie_cesta_probe(struct qcom_pcie *pcie, struct platform_device *pdev)
+{
+	struct qcom_pcie_cesta *c = &pcie->cesta;
+	struct device *dev = &pdev->dev;
+	struct device_node *np = dev->of_node;
+	u32 timeout_us = 5000, aux_mhz = 20;
+	struct device *crm;
+	int speed;
+
+	/* Without the CRM driver the link takes the plain suspend path. */
+	if (!IS_ENABLED(CONFIG_QCOM_CRM) || !of_property_present(np, "qcom,crm"))
+		return 0;
+
+	crm = crm_get(dev);
+	if (IS_ERR_OR_NULL(crm))
+		return dev_err_probe(dev, -EPROBE_DEFER, "CESTA CRM not ready\n");
+
+	c->sm = devm_platform_ioremap_resource_byname(pdev, "pcie_sm");
+	if (IS_ERR(c->sm))
+		return PTR_ERR(c->sm);
+	c->pdc = devm_platform_ioremap_resource_byname(pdev, "pcie_pdc");
+	if (IS_ERR(c->pdc))
+		return PTR_ERR(c->pdc);
+
+	c->sm_seq = qcom_pcie_cesta_read_seq(dev, "qcom,pcie-sm-seq", &c->sm_seq_len);
+	if (IS_ERR(c->sm_seq))
+		return PTR_ERR(c->sm_seq);
+	c->sm_branch = qcom_pcie_cesta_read_seq(dev, "qcom,pcie-sm-branch-seq",
+						&c->sm_branch_len);
+	if (IS_ERR(c->sm_branch))
+		return PTR_ERR(c->sm_branch);
+
+	if (of_property_read_u32(np, "qcom,pcie-sm-branch-offset", &c->sm_branch_offset) ||
+	    of_property_read_u32(np, "qcom,pcie-sm-start-offset", &c->sm_start_offset) ||
+	    of_property_read_u32(np, "qcom,pcie-clkreq-offset", &c->clkreq_offset) ||
+	    of_property_read_u32(np, "qcom,pcie-clkreq-pin", &c->clkreq_pin))
+		return dev_err_probe(dev, -EINVAL, "incomplete CESTA properties\n");
+
+	of_property_read_u32(np, "qcom,drv-l1ss-timeout-us", &timeout_us);
+	of_property_read_u32(np, "qcom,aux-clk-freq", &aux_mhz);
+	c->l1ss_sleep = timeout_us * aux_mhz;
+
+	speed = of_pci_get_max_link_speed(np);
+	c->level = (speed > 0 ? speed : 3) + 1;
+	c->drv = 0;
+	c->crm = crm;
+
+	dev_info(dev, "CESTA: HW DRV %u, active level %u\n", c->drv, c->level);
+
+	return 0;
+}
+
+/* Debug: the vendor's pcie-sm-debug registers plus the PARF CESTA ones. */
+static void qcom_pcie_cesta_dump(struct qcom_pcie *pcie, const char *when)
+{
+	static const u16 regs[] = { 0x1040, 0x1048, 0x1050, 0x1058, 0x1060,
+				    0x1068, 0x1070, 0x1078, 0x1080, 0x1088,
+				    0x1090, 0x1094, 0x1098, 0x109c };
+	struct qcom_pcie_cesta *c = &pcie->cesta;
+	struct device *dev = pcie->pci->dev;
+	u32 v[ARRAY_SIZE(regs)];
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(regs); i++)
+		v[i] = readl(c->sm + regs[i]);
+	dev_info(dev, "CESTA %s: sm 1040..1078: %x %x %x %x %x %x %x %x\n", when,
+		 v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
+	dev_info(dev, "CESTA %s: sm 1080 %x 1088 %x 1090..109c %x %x %x %x\n", when,
+		 v[8], v[9], v[10], v[11], v[12], v[13]);
+	dev_info(dev, "CESTA %s: PARF 180 %x 2b0 %x clkreq %x ltssm %x, switch %s\n",
+		 when, readl(pcie->parf + PARF_CESTA_L1SS_SLEEP),
+		 readl(pcie->parf + PARF_CESTA_CLKREQ_OVERRIDE),
+		 readl(pcie->parf + c->clkreq_offset),
+		 readl(pcie->parf + PARF_LTSSM),
+		 crm_hw_drv_switch_pending(c->crm, c->drv) ? "pending" : "idle");
+}
+
+/* The link sleeps in L1ss under CESTA; CLKREQ# wakes it. */
+static int qcom_pcie_cesta_suspend(struct qcom_pcie *pcie)
+{
+	union phy_notify enter = { .pcie_state = PHY_PCIE_CESTA_ENTER };
+	struct qcom_pcie_resources_2_7_0 *res = &pcie->res.v2_7_0;
+	struct qcom_pcie_cesta *c = &pcie->cesta;
+	struct device *dev = pcie->pci->dev;
+	struct qcom_pcie_port *port;
+	int ret;
+
+	writel(PARF_CESTA_L1SS_SLEEP_EN, pcie->parf + PARF_CESTA_L1SS_SLEEP);
+	writel(PARF_CESTA_L1SS_SLEEP_EN | c->l1ss_sleep,
+	       pcie->parf + PARF_CESTA_L1SS_SLEEP);
+
+	ret = msm_gpio_wakeup_set(c->clkreq_pin, true);
+	if (ret)
+		dev_warn(dev, "CLKREQ# wakeup not routed: %d\n", ret);
+	writel(PCIE_PDC_MAP_CLKREQ, c->pdc + PCIE_PDC_MAP);
+	writel(PCIE_PDC_CFG_FALLING | PCIE_PDC_CFG_EN, c->pdc + PCIE_PDC_CFG);
+
+	ret = qcom_pcie_cesta_vote(pcie, QCOM_PCIE_CESTA_DRV);
+	if (ret) {
+		writel(0, c->pdc + PCIE_PDC_MAP);
+		writel(PCIE_PDC_CFG_FALLING, c->pdc + PCIE_PDC_CFG);
+		msm_gpio_wakeup_set(c->clkreq_pin, false);
+		writel(0, pcie->parf + PARF_CESTA_L1SS_SLEEP);
+		return ret;
+	}
+
+	/*
+	 * From here the CRM sequencer owns the PCIe clock tree (core GDSC,
+	 * pipe mux, rchng clock, TCSR refclk, rails) and keeps it up for as
+	 * long as it holds the link at an active level. Linux lets go of all
+	 * of it now; genpd drops Linux's core GDSC vote right after this
+	 * callback. Anything Linux keeps holding stalls the sequencer on its
+	 * way down, and a wake arriving then never completes.
+	 */
+	clk_bulk_disable_unprepare(res->num_clks, res->clks);
+	list_for_each_entry(port, &pcie->ports, list)
+		phy_notify_state(port->phy, enter);
+
+	/*
+	 * The interconnect votes stay as they are: the endpoint may still DMA
+	 * while the system sleeps. Moving them to the CRM is the next step.
+	 */
+	pcie->drv_active = true;
+
+	return 0;
+}
+
+static int qcom_pcie_cesta_resume(struct qcom_pcie *pcie)
+{
+	union phy_notify exit = { .pcie_state = PHY_PCIE_CESTA_EXIT };
+	struct qcom_pcie_resources_2_7_0 *res = &pcie->res.v2_7_0;
+	struct qcom_pcie_cesta *c = &pcie->cesta;
+	struct device *dev = pcie->pci->dev;
+	struct qcom_pcie_port *port;
+	int ret;
+	u32 val;
+
+	pcie->drv_active = false;
+
+	/* genpd has the core GDSC back; take the clocks back before PARF. */
+	ret = clk_bulk_prepare_enable(res->num_clks, res->clks);
+	if (ret) {
+		dev_err(dev, "CESTA: cannot enable clocks: %d\n", ret);
+		return ret;
+	}
+	list_for_each_entry(port, &pcie->ports, list) {
+		ret = phy_notify_state(port->phy, exit);
+		if (ret)
+			dev_err(dev, "CESTA: PHY did not leave DRV: %d\n", ret);
+	}
+
+	/* Debug, while CESTA is new: where the SM is when the system resumes. */
+	qcom_pcie_cesta_dump(pcie, "resume entry");
+
+	/* Wake the link first, then vote D0: the SM finishes its own wake. */
+	writel(readl(pcie->parf + PARF_PM_CTRL) | REQ_NOT_ENTR_L1,
+	       pcie->parf + PARF_PM_CTRL);
+	if (readl_poll_timeout_atomic(pcie->parf + PARF_LTSSM, val,
+				      FIELD_GET(PARF_LTSSM_STATE_MASK, val) == DW_PCIE_LTSSM_L0,
+				      100, 20000))
+		dev_err(dev, "CESTA: link did not leave L1, LTSSM %#x\n", val);
+	ret = qcom_pcie_cesta_vote(pcie, QCOM_PCIE_CESTA_D0);
+	writel(readl(pcie->parf + PARF_PM_CTRL) & ~REQ_NOT_ENTR_L1,
+	       pcie->parf + PARF_PM_CTRL);
+	if (ret)
+		qcom_pcie_cesta_dump(pcie, "D0 vote did not complete");
+
+	writel(0, pcie->parf + PARF_CESTA_L1SS_SLEEP);
+	msm_gpio_wakeup_set(c->clkreq_pin, false);
+	writel(0, c->pdc + PCIE_PDC_MAP);
+	writel(PCIE_PDC_CFG_FALLING, c->pdc + PCIE_PDC_CFG);
+
+	/* The endpoint's driver touches the link right after this. */
+	if (readl_poll_timeout(pcie->parf + PARF_LTSSM, val,
+			       qcom_pcie_link_up(pcie->pci), 1000, 100000)) {
+		dev_err(dev, "CESTA: link down after sleep: LTSSM %#x\n", val);
+		return ret ?: -ETIMEDOUT;
+	}
+
+	return ret;
+}
+
 static int qcom_pcie_host_init(struct dw_pcie_rp *pp)
 {
 	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
@@ -1496,9 +1795,20 @@ static int qcom_pcie_host_init(struct dw_pcie_rp *pp)
 	if (ret)
 		return ret;
 
+	if (pcie->cesta.crm) {
+		qcom_pcie_cesta_load_sm(pcie);
+		qcom_pcie_cesta_vote(pcie, QCOM_PCIE_CESTA_D0);
+	}
+
 	ret = qcom_pcie_phy_power_on(pcie);
 	if (ret)
 		goto err_deinit;
+
+	if (pcie->cesta.crm) {
+		writel(readl(pcie->parf + pcie->cesta.clkreq_offset) | PARF_CESTA_CLKREQ_EN,
+		       pcie->parf + pcie->cesta.clkreq_offset);
+		qcom_pcie_cesta_dump(pcie, "boot");
+	}
 
 	if (!pci->suspended) {
 		ret = pci_pwrctrl_create_devices(pci->dev);
@@ -1569,6 +1879,9 @@ static void qcom_pcie_host_deinit(struct dw_pcie_rp *pp)
 
 	qcom_pcie_phy_power_off(pcie);
 	pcie->cfg->ops->deinit(pcie);
+
+	if (pcie->cesta.crm)
+		qcom_pcie_cesta_vote(pcie, QCOM_PCIE_CESTA_D3COLD);
 }
 
 static void qcom_pcie_host_post_init(struct dw_pcie_rp *pp)
@@ -2430,6 +2743,10 @@ static int qcom_pcie_probe(struct platform_device *pdev)
 	if (of_property_read_bool(dev->of_node, "qcom,drv-supported"))
 		pcie->drv_id = of_get_pci_domain_nr(dev->of_node);
 
+	ret = qcom_pcie_cesta_probe(pcie, pdev);
+	if (ret)
+		goto err_phy_exit;
+
 	/* WAKE# wakes the system while the ADSP holds the link (PCIe DRV). */
 	wake = devm_gpiod_get_optional(dev, "wake", GPIOD_IN);
 	if (!IS_ERR_OR_NULL(wake)) {
@@ -2441,7 +2758,7 @@ static int qcom_pcie_probe(struct platform_device *pdev)
 	}
 
 	ret = dw_pcie_host_init(pp);
-	if (!ret && pcie->drv_id >= 0)
+	if (!ret && (pcie->drv_id >= 0 || pcie->cesta.crm))
 		pp->bridge->suspend_keeps_link = 1;
 	if (ret) {
 		dev_err_probe(dev, ret, "cannot initialize host\n");
@@ -2645,8 +2962,13 @@ static int qcom_pcie_wake_armed_one(struct pci_dev *pdev, void *data)
 {
 	bool *armed = data;
 
+	/*
+	 * Only an endpoint left in D0 keeps its link: one its driver let the
+	 * PCI core put into D3hot (wake-on-WLAN refused, say) would come back
+	 * across a dead link.
+	 */
 	if (!pci_is_bridge(pdev) && pdev->dev.driver &&
-	    device_may_wakeup(&pdev->dev)) {
+	    device_may_wakeup(&pdev->dev) && pdev->current_state == PCI_D0) {
 		*armed = true;
 		return 1;
 	}
@@ -2674,10 +2996,13 @@ static int qcom_pcie_drv_suspend(struct qcom_pcie *pcie)
 	struct qcom_pcie_port *port;
 	int ret;
 
-	if (pcie->drv_id < 0 ||
+	if ((pcie->drv_id < 0 && !pcie->cesta.crm) ||
 	    pcie->cfg->ops->get_resources != qcom_pcie_get_resources_2_7_0 ||
 	    !dw_pcie_link_up(pci) || !qcom_pcie_wake_armed(pcie))
 		return -EOPNOTSUPP;
+
+	if (pcie->cesta.crm)
+		return qcom_pcie_cesta_suspend(pcie);
 
 	ret = qcom_pcie_drv_send(pcie, QCOM_PCIE_DRV_CMD_ENABLE);
 	if (ret)
@@ -2708,6 +3033,9 @@ static int qcom_pcie_drv_resume(struct qcom_pcie *pcie)
 	struct device *dev = pcie->pci->dev;
 	struct qcom_pcie_port *port;
 	int ret;
+
+	if (pcie->cesta.crm)
+		return qcom_pcie_cesta_resume(pcie);
 
 	pcie->drv_active = false;
 

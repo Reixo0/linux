@@ -1216,6 +1216,54 @@ static int msm_gpio_irq_set_wake(struct irq_data *d, unsigned int on)
 	return irq_set_irq_wake(pctrl->irq, on);
 }
 
+static struct msm_pinctrl *msm_wakeup_pctrl;
+
+/**
+ * msm_gpio_wakeup_set() - Route a pin's events to the wakeup controller
+ * @gpio: GPIO number on the (first) TLMM
+ * @enable: Route or stop routing
+ *
+ * For a pin that keeps a function other than GPIO but whose level a wakeup
+ * controller (PDC) must still see while the system sleeps, such as the PCIe
+ * CLKREQ# pin whose assertion brings a sleeping link back. Requesting the pin
+ * as an interrupt would mux it to GPIO, so only the wakeup_enable bit is set.
+ *
+ * Return: 0 on success, -ENODEV before the TLMM probes, -EINVAL for a bad pin,
+ * -EOPNOTSUPP when the pin has no wakeup_enable bit.
+ */
+int msm_gpio_wakeup_set(unsigned int gpio, bool enable)
+{
+	struct msm_pinctrl *pctrl = READ_ONCE(msm_wakeup_pctrl);
+	const struct msm_pingroup *g;
+	unsigned long flags;
+	u32 intr_cfg;
+
+	if (!pctrl)
+		return -ENODEV;
+	if (gpio >= pctrl->chip.ngpio)
+		return -EINVAL;
+
+	g = &pctrl->soc->groups[gpio];
+	if (!g->intr_wakeup_present_bit)
+		return -EOPNOTSUPP;
+
+	raw_spin_lock_irqsave(&pctrl->lock, flags);
+	intr_cfg = msm_readl_intr_cfg(pctrl, g);
+	if (!(intr_cfg & BIT(g->intr_wakeup_present_bit))) {
+		raw_spin_unlock_irqrestore(&pctrl->lock, flags);
+		return -EOPNOTSUPP;
+	}
+	if (enable)
+		intr_cfg |= BIT(g->intr_wakeup_enable_bit);
+	else
+		intr_cfg &= ~BIT(g->intr_wakeup_enable_bit);
+	msm_writel_intr_cfg(intr_cfg, pctrl, g);
+	raw_spin_unlock_irqrestore(&pctrl->lock, flags);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(msm_gpio_wakeup_set);
+
 static int msm_gpio_irq_reqres(struct irq_data *d)
 {
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
@@ -1664,6 +1712,7 @@ int msm_pinctrl_probe(struct platform_device *pdev,
 		return ret;
 
 	platform_set_drvdata(pdev, pctrl);
+	cmpxchg(&msm_wakeup_pctrl, NULL, pctrl);
 
 	dev_dbg(&pdev->dev, "Probed Qualcomm pinctrl driver\n");
 
