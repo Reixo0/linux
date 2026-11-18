@@ -1678,6 +1678,9 @@ static void qcom_pcie_cesta_dump(struct qcom_pcie *pcie, const char *when)
 		 crm_hw_drv_switch_pending(c->crm, c->drv) ? "pending" : "idle");
 }
 
+static void qcom_pcie_icc_opp_update(struct qcom_pcie *pcie);
+static int qcom_pcie_set_max_opp(struct device *dev);
+
 /* The link sleeps in L1ss under CESTA; CLKREQ# wakes it. */
 static int qcom_pcie_cesta_suspend(struct qcom_pcie *pcie)
 {
@@ -1720,9 +1723,21 @@ static int qcom_pcie_cesta_suspend(struct qcom_pcie *pcie)
 		phy_notify_state(port->phy, enter);
 
 	/*
-	 * The interconnect votes stay as they are: the endpoint may still DMA
-	 * while the system sleeps. Moving them to the CRM is the next step.
+	 * Drop the interconnect and OPP votes too, as for the ADSP: kept, the
+	 * sleep-set bandwidth holds DDR and CX up for the whole suspend.
+	 * Android moves the bandwidth to the CRM (BW_PT) for the endpoint's
+	 * DMA while the link is up; that is not done here yet.
 	 */
+	icc_disable(pcie->icc_mem);
+	icc_disable(pcie->icc_cpu);
+	if (pcie->use_pm_opp) {
+		/* Drop the performance vote, or CX stays at NOM in sleep */
+		ret = dev_pm_opp_set_opp(pcie->pci->dev, NULL);
+		if (ret)
+			dev_warn(dev, "CESTA: failed to drop the OPP vote: %d\n", ret);
+		ret = 0;
+	}
+
 	pcie->drv_active = true;
 
 	return 0;
@@ -1739,6 +1754,11 @@ static int qcom_pcie_cesta_resume(struct qcom_pcie *pcie)
 	u32 val;
 
 	pcie->drv_active = false;
+
+	if (pcie->use_pm_opp)
+		qcom_pcie_set_max_opp(dev);
+	icc_enable(pcie->icc_cpu);
+	icc_enable(pcie->icc_mem);
 
 	/* genpd has the core GDSC back; take the clocks back before PARF. */
 	ret = clk_bulk_prepare_enable(res->num_clks, res->clks);
@@ -1779,6 +1799,8 @@ static int qcom_pcie_cesta_resume(struct qcom_pcie *pcie)
 		dev_err(dev, "CESTA: link down after sleep: LTSSM %#x\n", val);
 		return ret ?: -ETIMEDOUT;
 	}
+
+	qcom_pcie_icc_opp_update(pcie);
 
 	return ret;
 }
