@@ -342,6 +342,7 @@ struct qcom_pcie_cesta {
 	u32 clkreq_offset;	/* PARF register that hands CLKREQ# to CESTA */
 	u32 clkreq_pin;		/* TLMM pin of CLKREQ# */
 	bool sm_loaded;
+	bool sm_d3cold;		/* voted to D3cold: restart the SM before D0 */
 };
 
 struct qcom_pcie {
@@ -1569,8 +1570,18 @@ static void qcom_pcie_cesta_load_sm(struct qcom_pcie *pcie)
 	struct qcom_pcie_cesta *c = &pcie->cesta;
 	int i;
 
-	if (c->sm_loaded)
+	if (c->sm_loaded && !c->sm_d3cold)
 		return;
+
+	/*
+	 * After a D3cold vote the SM never serves the next D0 switch: the CRM
+	 * channel stays pending, and later votes land on the live channel.
+	 * Restart the SM from its program, as at probe.
+	 */
+	if (c->sm_loaded) {
+		writel(readl(c->sm + c->sm_start_offset) & ~BIT(0), c->sm + c->sm_start_offset);
+		udelay(10);
+	}
 
 	for (i = 0; i < c->sm_seq_len; i++)
 		writel_relaxed(c->sm_seq[i], c->sm + 4 * i);
@@ -1579,6 +1590,7 @@ static void qcom_pcie_cesta_load_sm(struct qcom_pcie *pcie)
 	writel(readl(c->sm + c->sm_start_offset) | BIT(0), c->sm + c->sm_start_offset);
 
 	c->sm_loaded = true;
+	c->sm_d3cold = false;
 }
 
 static u32 *qcom_pcie_cesta_read_seq(struct device *dev, const char *prop, int *len)
@@ -1902,8 +1914,8 @@ static void qcom_pcie_host_deinit(struct dw_pcie_rp *pp)
 	qcom_pcie_phy_power_off(pcie);
 	pcie->cfg->ops->deinit(pcie);
 
-	if (pcie->cesta.crm)
-		qcom_pcie_cesta_vote(pcie, QCOM_PCIE_CESTA_D3COLD);
+	if (pcie->cesta.crm && !qcom_pcie_cesta_vote(pcie, QCOM_PCIE_CESTA_D3COLD))
+		pcie->cesta.sm_d3cold = true;
 }
 
 static void qcom_pcie_host_post_init(struct dw_pcie_rp *pp)
